@@ -1,0 +1,5 @@
+networkx==3.2.1
+numpy==2.0.0
+opencv_python==4.10.0.84
+scikit_learn==1.5.0
+skimage==0.0
