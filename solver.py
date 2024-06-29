@@ -257,7 +257,7 @@ def solve_graph_outlines(image, outlines, pips):
     # print("COLOR:", len(color_graph.edges))
     # die_color_graph = libpip.make_die_color_graph(pips, error_threshold_hsv = np.array([0.05, 0.05, 0.15]))
     # print("DIE COLOR:", len(die_color_graph.edges))
-    distance_graph = libpip.make_distance_graph(pips, error_threshold = 50)
+    distance_graph = libpip.make_distance_graph(pips, error_threshold = 45)
     print("DISTANCE:", len(distance_graph.edges))
 
     dice_graph = nx.intersection_all([distance_graph])

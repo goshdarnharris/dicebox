@@ -101,6 +101,7 @@ def make_size_graph(pips, error_threshold = 0.1):
     size_error = np.abs(sizes[:,None,:] - sizes[None,:,:])
 
     graph = nx.Graph()
+    graph.add_nodes_from(range(len(pips)))
     edges = make_matching_edges(np.all(size_error < error_threshold*sizes[:,None], axis=-1))
     # size_error = size_error[edges[:,0],edges[:,1]]
     # edge_labels = np.array([{'size_error': d} for d in size_error])[:,None]
@@ -111,8 +112,9 @@ def make_size_graph(pips, error_threshold = 0.1):
 def make_color_graph(pips, error_threshold_hsv = np.array([0.1, 0.1, 0.2])):
     color = slice_by(pips, 'color')
     color_error = np.abs(color[:,None,:] - color[None,:,:])
-    
+
     graph = nx.Graph()
+    graph.add_nodes_from(range(len(pips)))
     edges = make_matching_edges(np.all((color_error < error_threshold_hsv*255), axis=-1))
     # color_error = color_error[edges[:,0],edges[:,1]]
     # edge_labels = np.array([{'color_error': d} for d in color_error])[:,None]
@@ -125,6 +127,7 @@ def make_die_color_graph(pips, error_threshold_hsv = np.array([0.05, 0.1, 0.2]))
     die_color_error = np.abs(die_color[:,None,:] - die_color[None,:,:])
 
     graph = nx.Graph()
+    graph.add_nodes_from(range(len(pips)))
     edges = make_matching_edges(np.all(die_color_error < error_threshold_hsv*255, axis=-1))
     # die_color_error = die_color_error[edges[:,0],edges[:,1]]
     # edge_labels = np.array([{'die_color_error': d} for d in die_color_error])[:,None]
@@ -136,6 +139,7 @@ def make_distance_graph(pips, error_threshold = 1):
     positions = slice_by(pips, 'location')
     distances = np.linalg.norm(positions[:,None,:] - positions[None,:,:], axis=-1)
     graph = nx.Graph()
+    graph.add_nodes_from(range(len(pips)))
     edges = make_matching_edges(distances < error_threshold)
     # distances = pips.distances[edges[:,0],edges[:,1]]
     # edge_labels = np.array([{'distance': d} for d in distances])[:,None]
