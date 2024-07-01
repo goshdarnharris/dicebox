@@ -27,7 +27,7 @@ class Pips(object):
     lookup: np.array
     np_pips: np.array
 
-def remove_from_image(pips, image, fill, factor = 1.0, expand = 0):
+def remove_from_image(image, pips, fill, factor = 1.0, expand = 0):
     for pip in Pip.generator(pips):
         pos = pip.pos
         r = pip.radius
@@ -41,7 +41,7 @@ def remove_from_image(pips, image, fill, factor = 1.0, expand = 0):
                    int(r*factor + expand), pfill, -1)
     return image
 
-def overlay_pips(pips, image):
+def overlay_pips(image, pips):
     for pip in Pip.generator(pips):
         cv2.circle(image, (int(pip.pos[0]), int(pip.pos[1])),
                 int(pip.radius), (255, 0, 0), 2)
@@ -166,7 +166,6 @@ def make_distance_graph(pips, error_threshold = 1):
 def make_six_graph():
     six_graph = nx.Graph()
     edge_scales = [1,2,np.linalg.norm([1,2]),np.linalg.norm([2,2])]
-    print("EDGE SCALES",edge_scales)
     six_graph.add_edge(0, 3, distance = edge_scales[0])
     six_graph.add_edge(3, 6, distance = edge_scales[0])
     six_graph.add_edge(2, 5, distance = edge_scales[0])

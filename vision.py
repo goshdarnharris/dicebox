@@ -7,6 +7,8 @@ import toml
 
 from datetime import datetime as dt 
 from contextlib import contextmanager
+from functools import partial
+from inspect import signature
 
 import libpip
 import solver
@@ -44,47 +46,67 @@ class timestamped_output(object):
 output = timestamped_output()
 sys.stdout = output
 
-def get_outlines(frame, pips, prepend_imwrite = ""):
-    # hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    # hsv_no_pips = libpip.remove_from_image(pips, hsv, fill="auto", factor=1.25)
-    # rgb_no_pips = cv2.cvtColor(hsv_no_pips, cv2.COLOR_HSV2BGR)
-    # cv2.imwrite('outline.rgb.nopips.png',rgb_no_pips)
 
-    gray = cv2.cvtColor(frame,cv2.COLOR_BGR2GRAY)
-    cv2.imwrite(f'{prepend_imwrite}outline.gray.png',gray)
+def count_required_params(func):
+    params = signature(func).parameters
+    def test(param):
+        a = param.default == param.empty
+        b = param.kind == param.POSITIONAL_OR_KEYWORD
+        c = param.kind == param.POSITIONAL_ONLY
+        return a and (b or c)
+    required = len([p for p in params.values() if test(p)])
+    return required
 
-    blur = gray #cv2.medianBlur(gray, 3)
-    cv2.imwrite(f'{prepend_imwrite}outline.blur.png',blur)
-    grad = cv2.morphologyEx(blur, cv2.MORPH_GRADIENT, np.ones((5,5),np.uint8))
-    cv2.imwrite(f'{prepend_imwrite}outline.grad.png',grad)
-    cv2.normalize(grad, grad, 0, 255, cv2.NORM_MINMAX)
-    cv2.imwrite(f'{prepend_imwrite}outline.grad.norm.png',grad)
-    no_pips = libpip.remove_from_image(pips, grad, fill=(0,0,0), factor=1.3, expand = 5)
+class monad(object):
+    def __init__(self, value):
+        self.value = value
+    def __rshift__(self, func):
+        try:
+            if count_required_params(func) > 1:
+                def do(arg, *args, **kwargs):
+                    return func(arg, self.value, *args, **kwargs)
+                return do
+            else:
+                return monad(func(self.value))
+        except ValueError:
+            return monad(func(self.value))
 
-    cv2.imwrite(f'{prepend_imwrite}outline.nopips.png',grad)
+def write_image(path):
+    def write_image_func(im):
+        print(path)
+        cv2.imwrite(path, im)
+        return im
+    return write_image_func
 
-    grad_blur = cv2.medianBlur(no_pips, 3)
+def crop(x_slice, y_slice):
+    def do_crop(im):
+        return im[x_slice, y_slice]
+    return do_crop
 
-    cv2.imwrite(f'{prepend_imwrite}outline.grad.blur.png',grad_blur)
+def get_outlines(image, pips, prepend_imwrite = ""):    
+    open_kernel = np.ones((3, 3), np.uint8) 
 
+    outlines = (monad(image) 
+        >> partial(cv2.cvtColor, code = cv2.COLOR_BGR2GRAY)
+            >> write_image(f'{prepend_imwrite}outline.gray.png')
+        >> partial(cv2.morphologyEx, op = cv2.MORPH_GRADIENT, kernel = np.ones((5,5),np.uint8))
+            >> write_image(f'{prepend_imwrite}outline.grad.png')
+        >> partial(cv2.normalize, dst = None, alpha = 0, beta = 255, norm_type = cv2.NORM_MINMAX)
+            >> write_image(f'{prepend_imwrite}outline.grad.norm.png')
+        >> partial(libpip.remove_from_image, pips = pips, fill=(0,0,0), factor=1.3, expand = 5)
+            >> write_image(f'{prepend_imwrite}outline.nopips.png')
+        >> partial(cv2.medianBlur, ksize = 3)
+            >> write_image(f'{prepend_imwrite}outline.grad.blur.png')
+        >> (lambda x: cv2.threshold(x, thresh = 15, maxval = 255, type = cv2.THRESH_BINARY)[1])
+            >> write_image(f'{prepend_imwrite}outline.grad.thresh.png')
+        >> partial(cv2.medianBlur, ksize = 3)
+            >> write_image(f'{prepend_imwrite}outline.grad.thresh.blur.png')
+        >> partial(cv2.morphologyEx, op = cv2.MORPH_OPEN, kernel = open_kernel, iterations = 1)
+            >> write_image(f'{prepend_imwrite}outline.png')
+    )
+    return outlines.value
 
-    ret, grad_thresh = cv2.threshold(grad_blur, 15, 255, cv2.THRESH_BINARY)
-    cv2.imwrite(f'{prepend_imwrite}outline.grad.thresh.png',grad_thresh)
-    grad_thresh = cv2.medianBlur(grad_thresh, 3)
-    cv2.imwrite(f'{prepend_imwrite}outline.grad.thresh.blur.png',grad_thresh)
-
-    # define the kernel 
-    kernel = np.ones((3, 3), np.uint8) 
-    
-    # opening the image 
-    outlines = cv2.morphologyEx(grad_thresh, cv2.MORPH_OPEN, 
-                            kernel, iterations=1)
-    
-
-    cv2.imwrite(f'{prepend_imwrite}outline.png',outlines)
-    return outlines
-
-def overlay_info(frame, dice, pips):
+def overlay_info(frame, pips, dice):
     # Overlay pips
     for pip in libpip.Pip.generator(pips):
         pos = pip.pos
@@ -110,6 +132,8 @@ def test_inputs():
         if path not in ["truth.toml"] and not os.path.isdir(f"images/{path}"):
             yield path
 
+
+
 def main():
     os.makedirs('output', exist_ok=True)
 
@@ -122,32 +146,41 @@ def main():
         im = cv2.imread('images/' + path)       
 
         if im is not None:
+            image = monad(im)
             image_name = Path(path).stem
             os.makedirs(f"output/{image_name}", exist_ok=True)
             
             with output.indent(2):
-                image_cropped = im[540:2350, 775:3760]
-                image_downsampled = cv2.resize(image_cropped, (0,0), fx=0.3, fy=0.3, interpolation=cv2.INTER_LINEAR)
+                image_detect = (image 
+                    >> crop(slice(540, 2350), slice(775, 3760)) 
+                    >> partial(cv2.resize, dsize = (0,0), fx=0.3, fy=0.3, interpolation=cv2.INTER_LINEAR)
+                        >> write_image(f'output/{image_name}/original.png')
+                    >> partial(cv2.bilateralFilter, d = 3, sigmaColor = 50, sigmaSpace = 50)
+                        >> write_image(f'output/{image_name}/bilateral.png')
+                )
 
-                image_detect = image_downsampled
-
-                cv2.imwrite(f'output/{image_name}/original.png', image_detect)
-
-                image_detect = cv2.bilateralFilter(image_detect, 3, 50, 50)
-                cv2.imwrite(f'output/{image_name}/bilateral.png', image_detect)
-
-                pips = libpip.find_pips(image_detect)
+                pips = image_detect >> libpip.find_pips
                 print("found pips")
+                (image_detect #write an image with pips
+                    >> np.copy 
+                    >> (pips >> libpip.overlay_pips) 
+                        >> write_image(f'output/{image_name}/pips.png')
+                )
 
-                cv2.imwrite(f'output/{image_name}/pips.png', libpip.overlay_pips(pips, image_detect.copy()))
-                print("getting outlines")
-                outlines = get_outlines(image_detect, pips, prepend_imwrite = f"output/{image_name}/")
-                print("extracting dice")
-                # dice = solver.solve_image_clustering_outline_penalty(image_detect,outlines,pips)
-                dice = solver.solve_graph_outlines(image_detect,outlines, pips, prepend_figs = f"output/{image_name}/")
+                outlines = image_detect >> (pips >> partial(get_outlines, prepend_imwrite = f"output/{image_name}/"))
 
-                out_pips = overlay_info(image_detect, dice, pips)
-                cv2.imwrite(f'output/{image_name}/overlay.png',out_pips)
+                # dice = image_detect >> (outlines >> (pips >> partial(solver.solve_graph_outlines, prepend_figs = f"output/{image_name}/")))
+                dice = solver.solve_graph_outlines(
+                    image_detect.value, 
+                    outlines.value, 
+                    pips.value, 
+                    prepend_figs = f"output/{image_name}/"
+                )
+
+                (image_detect 
+                    >> (pips >> partial(overlay_info, dice = dice)) 
+                        >> write_image(f'output/{image_name}/overlay.png')
+                )
 
                 results = [len(ps[0]) for ps in dice]
                 all_correct = True
