@@ -7,6 +7,7 @@ import sklearn.cluster
 import sklearn.metrics
 import skimage
 from dataclasses import dataclass
+import matplotlib.pyplot as plt
 
 
 
@@ -66,53 +67,53 @@ class SixMatcher(isomorphism.GraphMatcher):
         six_graph = nx.Graph()
         self.edge_scales = [1,2,np.linalg.norm([1,2]),np.linalg.norm([2,2])]
 
-        six_graph.add_edge(0,3,weight = self.edge_scales[0])
-        six_graph.add_edge(3,6,weight = self.edge_scales[0])
-        six_graph.add_edge(2,5,weight = self.edge_scales[0])
-        six_graph.add_edge(5,8,weight = self.edge_scales[0])
-        six_graph.add_edge(0,2,weight = self.edge_scales[1])
-        six_graph.add_edge(3,5,weight = self.edge_scales[1])
-        six_graph.add_edge(6,8,weight = self.edge_scales[1])
-        six_graph.add_edge(0,6,weight = self.edge_scales[1])
-        six_graph.add_edge(2,8,weight = self.edge_scales[1])
-        six_graph.add_edge(0,5,weight = self.edge_scales[2])
-        six_graph.add_edge(3,2,weight = self.edge_scales[2])
-        six_graph.add_edge(3,8,weight = self.edge_scales[2])
-        six_graph.add_edge(6,5,weight = self.edge_scales[2])
-        six_graph.add_edge(0,8,weight = self.edge_scales[3])
-        six_graph.add_edge(6,2,weight = self.edge_scales[3])
+        six_graph.add_edge(0, 3, distance = self.edge_scales[0])
+        six_graph.add_edge(3, 6, distance = self.edge_scales[0])
+        six_graph.add_edge(2, 5, distance = self.edge_scales[0])
+        six_graph.add_edge(5, 8, distance = self.edge_scales[0])
+        six_graph.add_edge(0, 2, distance = self.edge_scales[1])
+        six_graph.add_edge(3, 5, distance = self.edge_scales[1])
+        six_graph.add_edge(6, 8, distance = self.edge_scales[1])
+        six_graph.add_edge(0, 6, distance = self.edge_scales[1])
+        six_graph.add_edge(2, 8, distance = self.edge_scales[1])
+        six_graph.add_edge(0, 5, distance = self.edge_scales[2])
+        six_graph.add_edge(3, 2, distance = self.edge_scales[2])
+        six_graph.add_edge(3, 8, distance = self.edge_scales[2])
+        six_graph.add_edge(6, 5, distance = self.edge_scales[2])
+        six_graph.add_edge(0, 8, distance = self.edge_scales[3])
+        six_graph.add_edge(6, 2, distance = self.edge_scales[3])
 
         super().__init__(pip_graph, six_graph)
         self.pip_graph = pip_graph
         self.die_graph = six_graph
-    def semantic_feasibility(self, pip_node, die_node):
-        #find the shortest edge from the pipe node
-        # print(self.pip_graph[pip_node])
-        edge_lengths_pip = [e['weight'] for e in self.pip_graph[pip_node].values()]
-        shortest_distance_pip = min(edge_lengths_pip)
+    # def semantic_feasibility(self, pip_node, die_node):
+    #     #find the shortest edge from the pipe node
+    #     # print(self.pip_graph[pip_node])
+    #     edge_lengths_pip = [e['weight'] for e in self.pip_graph[pip_node].values()]
+    #     shortest_distance_pip = min(edge_lengths_pip)
 
-        n_edges_at_scale = []
-        for scale in self.edge_scales:
-            matches = np.where(np.isclose(edge_lengths_pip, scale*shortest_distance_pip, rtol=0.075))[0]
-            n_edges_at_scale.append(len(matches))
-        n_edges_at_scale = np.array(n_edges_at_scale)
-        # print("PIP", pip_node, "DIE", die_node)
-        # print("SHORTEST", shortest_distance_pip)
-        # print("EDGES", edge_lengths_pip)
-        # for idx,edges in enumerate(n_edges_at_scale):
-        #     print(f"\tSCALE {idx}", edges)
+    #     n_edges_at_scale = []
+    #     for scale in self.edge_scales:
+    #         matches = np.where(np.isclose(edge_lengths_pip, scale*shortest_distance_pip, rtol=0.075))[0]
+    #         n_edges_at_scale.append(len(matches))
+    #     n_edges_at_scale = np.array(n_edges_at_scale)
+    #     # print("PIP", pip_node, "DIE", die_node)
+    #     # print("SHORTEST", shortest_distance_pip)
+    #     # print("EDGES", edge_lengths_pip)
+    #     # for idx,edges in enumerate(n_edges_at_scale):
+    #     #     print(f"\tSCALE {idx}", edges)
 
-        maybe_corner = False
-        maybe_edge = False
-        if np.any(n_edges_at_scale >= np.array([1,2,1,1])): # corner pip
-            maybe_corner = True
-        if np.any(n_edges_at_scale >= np.array([2,1,2,0])):
-            maybe_edge = True
-        # corner pips
-        if die_node in [0,2,6,8] and maybe_corner: return True
-        # edge pips
-        elif die_node in [3,5] and maybe_edge: return True
-        return False    
+    #     maybe_corner = False
+    #     maybe_edge = False
+    #     if np.any(n_edges_at_scale >= np.array([1,2,1,1])): # corner pip
+    #         maybe_corner = True
+    #     if np.any(n_edges_at_scale >= np.array([2,1,2,0])):
+    #         maybe_edge = True
+    #     # corner pips
+    #     if die_node in [0,2,6,8] and maybe_corner: return True
+    #     # edge pips
+    #     elif die_node in [3,5] and maybe_edge: return True
+    #     return False    
 
 def solve_sixes(image, graphs):
     #For the 6, the die is the subgraph where:
@@ -249,24 +250,30 @@ def solve_image_clustering_outline_penalty(image, outlines, pips):
     else:
         return []
 
+def graph_write(graph, path):
+    nx.draw(graph, with_labels = True)
+    plt.savefig(path)
+    plt.close()
 
-def solve_graph_outlines(image, outlines, pips):
-    # size_graph = libpip.make_size_graph(pips, error_threshold = 0.1)
-    # print("SIZE:", len(size_graph.edges))
-    # color_graph = libpip.make_color_graph(pips, error_threshold_hsv = np.array([0.1, 0.1, 0.15]))
-    # print("COLOR:", len(color_graph.edges))
-    # die_color_graph = libpip.make_die_color_graph(pips, error_threshold_hsv = np.array([0.05, 0.05, 0.15]))
-    # print("DIE COLOR:", len(die_color_graph.edges))
-    distance_graph = libpip.make_distance_graph(pips, error_threshold = 45)
+def solve_graph_outlines(image, outlines, pips, prepend_figs = ""):
+    size_graph = libpip.make_size_graph(pips, error_threshold = 0.2)
+    print("SIZE:", len(size_graph.edges))
+    color_graph = libpip.make_color_graph(pips, error_threshold_hsv = np.array([0.2, 0.2, 0.2]))
+    print("COLOR:", len(color_graph.edges))
+    die_color_graph = libpip.make_die_color_graph(pips, error_threshold_hsv = np.array([0.2, 0.2, 0.2]))
+    print("DIE COLOR:", len(die_color_graph.edges))
+    distance_graph = libpip.make_distance_graph(pips, error_threshold = 12)
     print("DISTANCE:", len(distance_graph.edges))
 
-    dice_graph = nx.intersection_all([distance_graph])
+    dice_graph = nx.intersection_all([size_graph, color_graph, die_color_graph, distance_graph])
+    nx.set_edge_attributes(dice_graph, distance_graph.edges)
+
     edges = dice_graph.edges
 
-    edge_outline_losses = libpip.calculate_outline_loss(pips, edges, outlines, loss = 0.1)    
+    edge_outline_losses = libpip.calculate_outline_loss(pips, edges, outlines, loss = 0.35)    
 
     for edge, loss in zip(edges, edge_outline_losses):
-        if loss > 10:
+        if loss > 1:
             dice_graph.remove_edge(*edge)
 
     dice = []
@@ -275,4 +282,51 @@ def solve_graph_outlines(image, outlines, pips):
         pip_locations = libpip.slice_by(candidate_pips, 'location')
         centroid = np.mean(pip_locations, axis=0)
         dice.append([candidate_pips, *centroid])
+    print("solved dice")
+
+    # six_graph = libpip.six_graph
+    # graph_write(six_graph, f'{prepend_figs}six_graph.png')
+    # annotated_image = image.copy()
+    # for idx, die_candidate in enumerate(nx.connected_components(dice_graph)):
+    #     if len(die_candidate) == 6:
+    #         candidate_graph = dice_graph.subgraph(die_candidate)
+    #         graph_write(candidate_graph, f'{prepend_figs}candidate_graph.{idx}.png')
+    #         #get shortest edge in the die
+    #         shortest_edge = min(candidate_graph.edges(data=True), key = lambda x: x[2]['distance'])[2]['distance']
+
+    #         print("SIX:", np.sort(np.array([e[2]['distance'] for e in six_graph.edges(data=True)])))
+    #         print("CAN:", np.sort(np.array([e[2]['distance'] for e in candidate_graph.edges(data=True)])/shortest_edge))
+
+    #         def edge_match(dict_die, dict_candidate):
+    #             distance_candidate = dict_candidate['distance']
+    #             distance_die = dict_die['distance']
+    #             result = np.isclose(distance_die, distance_candidate/shortest_edge, rtol=0.15)
+    #             # if not result:
+    #             #     print("EDGE MISMATCH", distance_candidate/shortest_edge, distance_die)
+    #             return result
+
+    #         gm = isomorphism.GraphMatcher(
+    #             six_graph, 
+    #             candidate_graph, 
+    #             edge_match = edge_match                
+    #         )
+    #         print(f"{idx} ISO SIX:", gm.subgraph_is_monomorphic(), 
+    #             f"{len(candidate_graph.nodes)}:{len(candidate_graph.edges)}", 
+    #             f"{len(six_graph.nodes)}:{len(six_graph.edges)}"
+    #         )
+            
+    #         candidate_pips = pips[list(die_candidate),:]
+    #         pip_locations = libpip.slice_by(candidate_pips, 'location')
+    #         centroid_x, centroid_y = np.mean(pip_locations, axis=0)
+
+    #         textsize = cv2.getTextSize(
+    #             str(idx), cv2.FONT_HERSHEY_PLAIN, 3, 2)[0]
+
+    #         cv2.putText(annotated_image, str(idx),
+    #             (int(centroid_x - textsize[0] / 2),
+    #             int(centroid_y + textsize[1] / 2)),
+    #             cv2.FONT_HERSHEY_PLAIN, 3, (0, 255, 0), 2)
+
+    # cv2.imwrite(f'{prepend_figs}six.annotated.png',annotated_image)
+
     return dice
