@@ -55,6 +55,8 @@ def overlay_pips(image, pips):
                     cv2.FONT_HERSHEY_PLAIN, 2, (0, 255, 0), 2)
     return image
 
+import code
+
 def find_pips(frame):
     params = cv2.SimpleBlobDetector_Params()
     params.minInertiaRatio = 0.75
@@ -62,6 +64,7 @@ def find_pips(frame):
 
     # frame_blurred = cv2.medianBlur(frame, 3)
     frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    frame_gray = cv2.equalizeHist(frame_gray)
 
     cv2.imwrite('blurred.findpips.png',frame)
 
@@ -91,6 +94,7 @@ def find_pips(frame):
     die_colors = np.median(die_color_samples, axis=0)
 
     np_pips = np.concatenate((pip_locations, pip_radii[:,None], pip_colors, die_colors), axis=1)
+    #code.interact(local=locals())
     return np_pips
 
 def slice_by(pips, key):

@@ -9,6 +9,7 @@ from datetime import datetime as dt
 from contextlib import contextmanager
 from functools import partial
 from inspect import signature
+from typing import List
 
 import libpip
 import solver
@@ -89,18 +90,18 @@ def get_outlines(image, pips, prepend_imwrite = ""):
     outlines = (monad(image) 
         >> partial(cv2.cvtColor, code = cv2.COLOR_BGR2GRAY)
             >> write_image(f'{prepend_imwrite}outline.gray.png')
-        >> partial(cv2.morphologyEx, op = cv2.MORPH_GRADIENT, kernel = np.ones((5,5),np.uint8))
+        >> partial(cv2.morphologyEx, op = cv2.MORPH_GRADIENT, kernel = np.ones((6,6),np.uint8))
             >> write_image(f'{prepend_imwrite}outline.grad.png')
         >> partial(cv2.normalize, dst = None, alpha = 0, beta = 255, norm_type = cv2.NORM_MINMAX)
             >> write_image(f'{prepend_imwrite}outline.grad.norm.png')
-        >> partial(libpip.remove_from_image, pips = pips, fill=(0,0,0), factor=1.3, expand = 5)
+        >> partial(libpip.remove_from_image, pips = pips, fill=(0,0,0), factor=1.6, expand = 5)
             >> write_image(f'{prepend_imwrite}outline.nopips.png')
-        >> partial(cv2.medianBlur, ksize = 3)
-            >> write_image(f'{prepend_imwrite}outline.grad.blur.png')
-        >> (lambda x: cv2.threshold(x, thresh = 15, maxval = 255, type = cv2.THRESH_BINARY)[1])
+        #>> partial(cv2.medianBlur, ksize = 3)
+        #    >> write_image(f'{prepend_imwrite}outline.grad.blur.png')
+        >> (lambda x: cv2.threshold(x, thresh = 10, maxval = 255, type = cv2.THRESH_BINARY)[1])
             >> write_image(f'{prepend_imwrite}outline.grad.thresh.png')
-        >> partial(cv2.medianBlur, ksize = 3)
-            >> write_image(f'{prepend_imwrite}outline.grad.thresh.blur.png')
+        #>> partial(cv2.medianBlur, ksize = 3)
+        #    >> write_image(f'{prepend_imwrite}outline.grad.thresh.blur.png')
         >> partial(cv2.morphologyEx, op = cv2.MORPH_OPEN, kernel = open_kernel, iterations = 1)
             >> write_image(f'{prepend_imwrite}outline.png')
     )
@@ -132,7 +133,44 @@ def test_inputs():
         if path not in ["truth.toml"] and not os.path.isdir(f"images/{path}"):
             yield path
 
+def do_recognition(im:cv2.Mat, debug_dir)->List[int]:
+    image = monad(im)
+    os.makedirs(debug_dir, exist_ok=True)
+    
+    with output.indent(2):
+        image_detect = (image 
+            >> write_image(f'{debug_dir}/original.png')
+            >> partial(cv2.bilateralFilter, d = 3, sigmaColor = 50, sigmaSpace = 50)
+                >> write_image(f'{debug_dir}/bilateral.png')
+        )
 
+        pips = image_detect >> libpip.find_pips
+        print("found pips")
+        (image_detect #write an image with pips
+            >> np.copy 
+            >> (pips >> libpip.overlay_pips) 
+                >> write_image(f'{debug_dir}/pips.png')
+        )
+
+        outlines = image_detect >> (pips >> partial(get_outlines, prepend_imwrite = f"{debug_dir}/"))
+
+        # dice = image_detect >> (outlines >> (pips >> partial(solver.solve_graph_outlines, prepend_figs = f"{debug_dir}/")))
+        dice = solver.solve_graph_outlines(
+            image_detect.value, 
+            outlines.value, 
+            pips.value, 
+            prepend_figs = f"{debug_dir}/"
+        )
+
+        (image_detect 
+            >> (pips >> partial(overlay_info, dice = dice)) 
+                >> write_image(f'{debug_dir}/overlay.png')
+        )
+
+        results = [len(ps[0]) for ps in dice]
+        return results
+
+import code
 
 def main():
     os.makedirs('output', exist_ok=True)
@@ -146,43 +184,14 @@ def main():
         im = cv2.imread('images/' + path)       
 
         if im is not None:
-            image = monad(im)
             image_name = Path(path).stem
-            os.makedirs(f"output/{image_name}", exist_ok=True)
-            
+            debug_dir = f"output/{image_name}"
+            image_crop = (monad(im)
+                >> crop(slice(540, 2350), slice(775, 3760)) 
+                >> partial(cv2.resize, dsize = (0,0), fx=0.3, fy=0.3, interpolation=cv2.INTER_LINEAR)
+            )
+            results = do_recognition(image_crop.value, debug_dir)
             with output.indent(2):
-                image_detect = (image 
-                    >> crop(slice(540, 2350), slice(775, 3760)) 
-                    >> partial(cv2.resize, dsize = (0,0), fx=0.3, fy=0.3, interpolation=cv2.INTER_LINEAR)
-                        >> write_image(f'output/{image_name}/original.png')
-                    >> partial(cv2.bilateralFilter, d = 3, sigmaColor = 50, sigmaSpace = 50)
-                        >> write_image(f'output/{image_name}/bilateral.png')
-                )
-
-                pips = image_detect >> libpip.find_pips
-                print("found pips")
-                (image_detect #write an image with pips
-                    >> np.copy 
-                    >> (pips >> libpip.overlay_pips) 
-                        >> write_image(f'output/{image_name}/pips.png')
-                )
-
-                outlines = image_detect >> (pips >> partial(get_outlines, prepend_imwrite = f"output/{image_name}/"))
-
-                # dice = image_detect >> (outlines >> (pips >> partial(solver.solve_graph_outlines, prepend_figs = f"output/{image_name}/")))
-                dice = solver.solve_graph_outlines(
-                    image_detect.value, 
-                    outlines.value, 
-                    pips.value, 
-                    prepend_figs = f"output/{image_name}/"
-                )
-
-                (image_detect 
-                    >> (pips >> partial(overlay_info, dice = dice)) 
-                        >> write_image(f'output/{image_name}/overlay.png')
-                )
-
-                results = [len(ps[0]) for ps in dice]
                 all_correct = True
                 for roll in range(1,7):
                     if results.count(roll) == truth[path][str(roll)]:
