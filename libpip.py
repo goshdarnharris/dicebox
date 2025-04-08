@@ -62,7 +62,7 @@ def find_pips(frame):
     params.minInertiaRatio = 0.75
     detector = cv2.SimpleBlobDetector_create(params)
 
-    # frame_blurred = cv2.medianBlur(frame, 3)
+    frame_blurred = cv2.medianBlur(frame, 3)
     frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     frame_gray = cv2.equalizeHist(frame_gray)
 
