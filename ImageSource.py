@@ -39,9 +39,11 @@ try:
 
     warp_matrix = cv2.getPerspectiveTransform(src_pts, dst_pts)
 
-
+    out_dir = 'training_imgs'
+    img_i = 0
 
     def getImage():
+        global img_i
         # This will give us an RGB image
         rgb_img = picam.capture_array()
         # Convert to cv2 compliant BGR
@@ -49,22 +51,23 @@ try:
         # Keystone correction
         corrected_img = cv2.warpPerspective(bgr_img, warp_matrix, (1536, 864))
 
-        # img_name = "%s/%02d.jpg"%(dirname,i)
-        # cv2.imwrite(img_name, corrected_img)
+        img_name = "%s/%02d.jpg"%(out_dir,img_i)
+        cv2.imwrite(img_name, corrected_img)
         # os.system("eog %s"%img_name)
-        # i += 1
+        img_i += 1
         return corrected_img
     def close():
         picam.close()
 except Exception as e:
     print("Failed to open live camera feed. Using cached images.")
     print("Failure was: ", e)
-    src_dir = 'images/small_dice_44_acrylic_rough_side_up'
+    src_dir = 'images/final_box_45'
     fnames = os.listdir(src_dir)
 
     def getImage():
         # Load an image at random from the source dir
         fpath = os.path.join(src_dir, random.choice(fnames))
+        print("Loading ", fpath)
         img = cv2.imread(fpath)
         return img
     def close():

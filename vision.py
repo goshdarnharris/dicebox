@@ -140,11 +140,14 @@ def do_recognition(im:cv2.Mat, debug_dir)->List[int]:
     with output.indent(2):
         image_detect = (image 
             >> write_image(f'{debug_dir}/original.png')
-            >> partial(cv2.bilateralFilter, d = 3, sigmaColor = 50, sigmaSpace = 50)
+            >> partial(cv2.bilateralFilter, d = 30, sigmaColor = 25, sigmaSpace = 75)
                 >> write_image(f'{debug_dir}/bilateral.png')
         )
 
         pips = image_detect >> libpip.find_pips
+        if len(pips.value) == 0:
+            return []
+
         print("found pips")
         (image_detect #write an image with pips
             >> np.copy 
