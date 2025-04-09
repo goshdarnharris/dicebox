@@ -10,8 +10,6 @@ from dataclasses import dataclass
 import matplotlib.pyplot as plt
 
 
-
-
 @dataclass
 class PipGraphs(object):
     pips: libpip.Pips
@@ -256,21 +254,24 @@ def graph_write(graph, path):
     plt.close()
 
 def solve_graph_outlines(image, outlines, pips, prepend_figs = ""):
-    size_graph = libpip.make_size_graph(pips, error_threshold = 0.2)
-    print("SIZE:", len(size_graph.edges))
-    color_graph = libpip.make_color_graph(pips, error_threshold_hsv = np.array([0.2, 0.2, 0.2]))
-    print("COLOR:", len(color_graph.edges))
-    die_color_graph = libpip.make_die_color_graph(pips, error_threshold_hsv = np.array([0.2, 0.2, 0.2]))
-    print("DIE COLOR:", len(die_color_graph.edges))
+    #size_graph = libpip.make_size_graph(pips, error_threshold = 0.2)
+    #print("SIZE:", len(size_graph.edges))
+    #color_graph = libpip.make_color_graph(pips, error_threshold_hsv = np.array([0.2, 0.2, 0.2]))
+    #print("COLOR:", len(color_graph.edges))
+    #die_color_graph = libpip.make_die_color_graph(pips, error_threshold_hsv = np.array([0.2, 0.2, 0.2]))
+    #print("DIE COLOR:", len(die_color_graph.edges))
     distance_graph = libpip.make_distance_graph(pips, error_threshold = 12)
     print("DISTANCE:", len(distance_graph.edges))
 
-    dice_graph = nx.intersection_all([size_graph, color_graph, die_color_graph, distance_graph])
+    #dice_graph = nx.intersection_all([size_graph, color_graph, die_color_graph, distance_graph])
+    dice_graph = nx.intersection_all([distance_graph])
     nx.set_edge_attributes(dice_graph, distance_graph.edges)
 
     edges = dice_graph.edges
 
-    edge_outline_losses = libpip.calculate_outline_loss(pips, edges, outlines, loss = 0.35)    
+    print("Start outline loss...")
+    edge_outline_losses = libpip.calculate_outline_loss(pips, edges, outlines, loss = 0.35)
+    print("Done.")
 
     for edge, loss in zip(edges, edge_outline_losses):
         if loss > 1:

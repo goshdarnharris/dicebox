@@ -4,6 +4,16 @@ from dataclasses import dataclass
 import networkx as nx
 import skimage
 
+import libpysal.weights as lw
+
+# FIXME: For some reason the first call to lw.Gabriel() is insanely slow (10s-ish)
+# Front-load it so we don't have to wait during our first interaction
+
+if 1:
+    dummy = np.array( ((0,0), (1,1), (0,1)) )
+    print("Starting dummy gabriel...")
+    lw.Gabriel(dummy)
+    print("Done.")
 
 @dataclass(frozen=True)
 class Pip(object):
@@ -55,25 +65,29 @@ def overlay_pips(image, pips):
                     cv2.FONT_HERSHEY_PLAIN, 2, (0, 255, 0), 2)
     return image
 
-import code
-
 def find_pips(frame):
     params = cv2.SimpleBlobDetector_Params()
-    params.minInertiaRatio = 0.75
+    params.minInertiaRatio = 0.5
+    params.minArea = 300.0
+    params.maxArea = 1200.0
+    params.minDistBetweenBlobs = 25.0
     detector = cv2.SimpleBlobDetector_create(params)
 
-    frame_blurred = cv2.medianBlur(frame, 3)
+    #frame_blurred = cv2.medianBlur(frame, 3)
     frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     frame_gray = cv2.equalizeHist(frame_gray)
 
-    cv2.imwrite('blurred.findpips.png',frame)
+    cv2.imwrite('livecam/blurred.findpips.png',frame)
 
     blobs = detector.detect(frame_gray)
-
 
     pip_locations = np.array([np.array(b.pt) for b in blobs])
     pip_radii = np.array([b.size/2 for b in blobs])
     pip_indices = pip_locations.astype(np.int32)
+
+    if len(pip_indices) == 0:
+        # No pips detected
+        return np.array([])
 
     frame_blurred_hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
@@ -149,22 +163,43 @@ def make_die_color_graph(pips, error_threshold_hsv = np.array([0.05, 0.1, 0.2]))
 
 def make_distance_graph(pips, error_threshold = 1):
     positions = slice_by(pips, 'location')
+    print("Start delaunay...")
+    gabriel = lw.Gabriel(positions)
+    print("Done.")
+
+    edges = set()
+    for i, neighbors in gabriel.neighbors.items():
+        for j in neighbors:
+            to_add = (i,j) if i<j else (j,i)
+            edges.add(to_add)
+
+    # edges now contains the unique edges in the Gabriel graph
+    # Gel the order
+    edges = np.array(list(edges))
+
+    # Construct an array of pairs of locations
+    edge_locations = positions[edges]
+    distances = np.linalg.norm(edge_locations[:,0] - edge_locations[:,1], axis=-1)
+
     radii = np.squeeze(slice_by(pips, 'radius'))
-    # print("RADII",radii)
-    zeros = np.zeros((len(pips), len(pips)))
-    radii_square = radii[None,:] + zeros
-    # print("RADII",radii_square)
-    distances = np.linalg.norm(positions[:,None,:] - positions[None,:,:], axis=-1)
-    # print("DISTANCES",distances)
-    distances_pips = distances/radii_square
-    # print("DISTANCES PIPS",distances_pips)
+
+    edge_radii = radii[edges]
+    avg_radii_by_edge = np.average(edge_radii,-1)
+
+    normalized_dist = distances / avg_radii_by_edge
+    labeled_edges = np.array([{'distance': d} for d in normalized_dist])[:,None]
+    labeled_edges = np.concatenate((edges, labeled_edges), axis=-1)
+
+    # Optimization: From observation, we know that we don't see edges within a die which are > 7ish pip-radii long
+    # Exclude all edges with length > 10
+    short_edges = np.array([
+        row for row in labeled_edges
+        if row[2]['distance'] < 10.0
+    ])
+
     graph = nx.Graph()
     graph.add_nodes_from(range(len(pips)))
-    edges = make_matching_edges(distances_pips < error_threshold)
-    distances = distances[edges[:,0],edges[:,1]]
-    edge_labels = np.array([{'distance': d} for d in distances])[:,None]
-    labeled_edges = np.concatenate((edges, edge_labels), axis=-1)
-    graph.add_edges_from(labeled_edges)
+    graph.add_edges_from(short_edges)
     return graph
 
 def make_six_graph():
@@ -189,13 +224,20 @@ def make_six_graph():
 
 six_graph = make_six_graph()
 
+def fast_profile_sum(image, p0, p1):
+    rr, cc = skimage.draw.line(int(p0[1]), int(p0[0]), int(p1[1]), int(p1[0]))
+    return np.float32(np.sum(image[rr, cc]))
+
 def calculate_outline_loss(pips, edges, outlines, loss = 1):
     locations = slice_by(pips, 'location')
     losses = []
     for edge in edges:
         pip_a = locations[edge[0]]
         pip_b = locations[edge[1]]
-        profile = skimage.measure.profile_line(outlines, (pip_a[1], pip_a[0]), (pip_b[1], pip_b[0]))
-        this_loss = np.sum(profile.astype(np.float32)/255)*loss
+        #profile = skimage.measure.profile_line(outlines, (pip_a[1], pip_a[0]), (pip_b[1], pip_b[0]),
+        #                                       order=0, mode='nearest')
+        #this_loss = np.sum(profile.astype(np.float32)/255)*loss
+        this_loss = fast_profile_sum(outlines, (pip_a[0], pip_a[1]), (pip_b[0], pip_b[1]))
+        this_loss /= 255.0
         losses.append(this_loss)
     return losses

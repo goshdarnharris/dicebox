@@ -1,5 +1,14 @@
+# You need to apt install:
+# libcap libcap-dev libcamera-dev libkms++-dev libfmt-dev libdrm-dev
+
 networkx==3.2.1
 numpy==2.0.0
 opencv_python==4.10.0.84
-scikit_learn==1.5.0
-skimage==0.0
+scikit_learn #==1.5.0
+scikit-image #==0.24.0
+toml==0.10.2
+matplotlib==3.10.1
+
+#picamera2==0.3.25
+#rpi-libcamera==0.1a9
+#rpi-kms==0.1a1
