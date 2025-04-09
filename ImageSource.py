@@ -34,7 +34,7 @@ try:
 
     # Keystone correction: These numbers hardcoded by looking at an output image for this mechanical setup.
     # Will need future adjustment.
-    src_pts = np.float32([(48, 45), (1450, 60), (1350, 780), (145, 787)])
+    src_pts = np.float32([(90, 105), (1400, 105), (1315, 780), (167, 787)])
     dst_pts = np.float32([(0, 0), (1536, 0), (1536, 864), (0, 864)])
 
     warp_matrix = cv2.getPerspectiveTransform(src_pts, dst_pts)
