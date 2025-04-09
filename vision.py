@@ -11,6 +11,8 @@ from functools import partial
 from inspect import signature
 from typing import List
 
+from numpy.ma.core import zeros_like
+
 import libpip
 import solver
 
@@ -114,18 +116,18 @@ def overlay_info(frame, pips, dice):
         r = pip.radius
 
         cv2.circle(frame, (int(pos[0]), int(pos[1])),
-                   int(r), (255, 0, 0), 2)
+                   int(r), (255, 0, 0), 4)
 
     # Overlay dice number
     for pips,centroid_x,centroid_y in dice:
         # Get textsize for text centering
         textsize = cv2.getTextSize(
-            str(len(pips)), cv2.FONT_HERSHEY_PLAIN, 3, 2)[0]
+            str(len(pips)), cv2.FONT_HERSHEY_PLAIN, 4, 4)[0]
 
         cv2.putText(frame, str(len(pips)),
                     (int(centroid_x - textsize[0] / 2),
                      int(centroid_y + textsize[1] / 2)),
-                    cv2.FONT_HERSHEY_PLAIN, 3, (0, 255, 0), 2)
+                    cv2.FONT_HERSHEY_PLAIN, 4, (0, 255, 0), 4)
     return frame
 
 def test_inputs():
@@ -146,9 +148,10 @@ def do_recognition(im:cv2.Mat, debug_dir)->List[int]:
 
         pips = image_detect >> libpip.find_pips
         if len(pips.value) == 0:
-            return []
+            # Return a null result and a black overlay image
+            return [], np.zeros((im.shape[0], im.shape[1], 4), dtype=np.uint8)
 
-        print("found pips")
+        print("Found %d pips"%len(pips.value))
         (image_detect #write an image with pips
             >> np.copy 
             >> (pips >> libpip.overlay_pips) 
@@ -170,8 +173,19 @@ def do_recognition(im:cv2.Mat, debug_dir)->List[int]:
                 >> write_image(f'{debug_dir}/overlay.png')
         )
 
+        overlay_img = np.zeros_like(im)
+        overlay_img_monad = monad(overlay_img)
+        (overlay_img_monad
+            >> (pips >> partial(overlay_info, dice=dice))
+         )
+
+        # Hacky - add an alpha channel to the returned image
+        alpha_chan = (np.any(overlay_img,-1) * 255).astype(np.uint8)
+        alpha_chan = alpha_chan[...,np.newaxis]
+        overlay_img = np.concatenate((overlay_img, alpha_chan), -1)
+
         results = [len(ps[0]) for ps in dice]
-        return results
+        return results, overlay_img
 
 import code
 

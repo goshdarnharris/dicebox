@@ -67,19 +67,34 @@ def overlay_pips(image, pips):
 
 def find_pips(frame):
     params = cv2.SimpleBlobDetector_Params()
-    params.minInertiaRatio = 0.5
-    params.minArea = 300.0
+    params.minInertiaRatio = 0.70
+    params.minArea = 500.0
     params.maxArea = 1200.0
     params.minDistBetweenBlobs = 25.0
     detector = cv2.SimpleBlobDetector_create(params)
 
     #frame_blurred = cv2.medianBlur(frame, 3)
     frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    frame_gray = cv2.equalizeHist(frame_gray)
 
-    cv2.imwrite('livecam/blurred.findpips.png',frame)
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    frame_gray = clahe.apply(frame_gray)
 
-    blobs = detector.detect(frame_gray)
+    #frame_gray = cv2.equalizeHist(frame_gray)
+
+    # Extend the edges because the blob detector struggles at the edges
+    padding_px = 50
+    padded_frame = cv2.copyMakeBorder(
+        frame_gray,
+        padding_px, padding_px, padding_px, padding_px,
+        borderType=cv2.BORDER_REPLICATE
+    )
+
+    cv2.imwrite('livecam/blurred.findpips.png',padded_frame)
+
+    blobs = detector.detect(padded_frame)
+    #Relocate to original unpadded image
+    for blob in blobs:
+        blob.pt = (blob.pt[0] - padding_px, blob.pt[1] - padding_px)
 
     pip_locations = np.array([np.array(b.pt) for b in blobs])
     pip_radii = np.array([b.size/2 for b in blobs])
@@ -163,16 +178,16 @@ def make_die_color_graph(pips, error_threshold_hsv = np.array([0.05, 0.1, 0.2]))
 
 def make_distance_graph(pips, error_threshold = 1):
     positions = slice_by(pips, 'location')
-    print("Start delaunay...")
-    gabriel = lw.Gabriel(positions)
-    print("Done.")
-
     edges = set()
-    for i, neighbors in gabriel.neighbors.items():
-        for j in neighbors:
-            to_add = (i,j) if i<j else (j,i)
-            edges.add(to_add)
+    if len(pips > 1):
+        print("Start delaunay...")
+        gabriel = lw.Gabriel(positions)
+        print("Done.")
 
+        for i, neighbors in gabriel.neighbors.items():
+            for j in neighbors:
+                to_add = (i,j) if i<j else (j,i)
+                edges.add(to_add)
     # edges now contains the unique edges in the Gabriel graph
     # Gel the order
     edges = np.array(list(edges))

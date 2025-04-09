@@ -58,6 +58,7 @@ try:
         return corrected_img
     def close():
         picam.close()
+    def onRaspi()->bool: return True
 except Exception as e:
     print("Failed to open live camera feed. Using cached images.")
     print("Failure was: ", e)
@@ -72,3 +73,6 @@ except Exception as e:
         return img
     def close():
         pass
+
+
+    def onRaspi() -> bool: return False
