@@ -87,27 +87,42 @@ def crop(x_slice, y_slice):
     return do_crop
 
 def get_outlines(image, pips, prepend_imwrite = ""):    
-    open_kernel = np.ones((3, 3), np.uint8) 
+    open_kernel = np.ones((3, 3), np.uint8)
+
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(6, 6))
+    #frame_gray = clahe.apply(frame_gray)
 
     outlines = (monad(image) 
         >> partial(cv2.cvtColor, code = cv2.COLOR_BGR2GRAY)
             >> write_image(f'{prepend_imwrite}outline.gray.png')
+        >> partial(clahe.apply)
+            >>  write_image(f'{prepend_imwrite}outline.gray.norm.png')
         >> partial(cv2.morphologyEx, op = cv2.MORPH_GRADIENT, kernel = np.ones((6,6),np.uint8))
             >> write_image(f'{prepend_imwrite}outline.grad.png')
+        >> partial(libpip.remove_from_image, pips=pips, fill=(0, 0, 0), factor=1.6, expand=5)
+            >> write_image(f'{prepend_imwrite}outline.nopips.png')
         >> partial(cv2.normalize, dst = None, alpha = 0, beta = 255, norm_type = cv2.NORM_MINMAX)
             >> write_image(f'{prepend_imwrite}outline.grad.norm.png')
-        >> partial(libpip.remove_from_image, pips = pips, fill=(0,0,0), factor=1.6, expand = 5)
-            >> write_image(f'{prepend_imwrite}outline.nopips.png')
         #>> partial(cv2.medianBlur, ksize = 3)
         #    >> write_image(f'{prepend_imwrite}outline.grad.blur.png')
-        >> (lambda x: cv2.threshold(x, thresh = 10, maxval = 255, type = cv2.THRESH_BINARY)[1])
-            >> write_image(f'{prepend_imwrite}outline.grad.thresh.png')
-        #>> partial(cv2.medianBlur, ksize = 3)
-        #    >> write_image(f'{prepend_imwrite}outline.grad.thresh.blur.png')
+        #>> (lambda x: cv2.threshold(x, thresh = 60, maxval = 255, type = cv2.THRESH_BINARY)[1])
+        #    >> write_image(f'{prepend_imwrite}outline.grad.thresh.png')
+        >> partial(cv2.GaussianBlur, ksize = (3,3), sigmaX=0)
+            >> write_image(f'{prepend_imwrite}outline.grad.thresh.blur.png')
         >> partial(cv2.morphologyEx, op = cv2.MORPH_OPEN, kernel = open_kernel, iterations = 1)
             >> write_image(f'{prepend_imwrite}outline.png')
     )
-    return outlines.value
+
+    rval = outlines.value
+
+    # Erode speckles
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (12,12))
+    rval = cv2.morphologyEx(rval, cv2.MORPH_OPEN, kernel)
+    rval = cv2.normalize(rval, dst = None, alpha = 0, beta = 255, norm_type = cv2.NORM_MINMAX)
+
+    cv2.imwrite(f'{prepend_imwrite}outline_despeckle.png', rval)
+
+    return rval
 
 def overlay_info(frame, pips, dice):
     # Overlay pips

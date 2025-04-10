@@ -274,7 +274,7 @@ def solve_graph_outlines(image, outlines, pips, prepend_figs = ""):
     print("Done.")
 
     for edge, loss in zip(edges, edge_outline_losses):
-        if loss > 1:
+        if loss > 2.0: # Empirical
             dice_graph.remove_edge(*edge)
 
     dice = []

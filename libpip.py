@@ -66,23 +66,22 @@ def overlay_pips(image, pips):
     return image
 
 def find_pips(frame):
-    params = cv2.SimpleBlobDetector_Params()
-    params.minInertiaRatio = 0.70
-    params.minArea = 500.0
-    params.maxArea = 1200.0
-    params.minDistBetweenBlobs = 25.0
-    detector = cv2.SimpleBlobDetector_create(params)
-
     #frame_blurred = cv2.medianBlur(frame, 3)
     frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(10, 10))
     frame_gray = clahe.apply(frame_gray)
+    #_, frame_gray = cv2.threshold(frame_gray, thresh=128, maxval=255, type=cv2.THRESH_BINARY)
 
-    #frame_gray = cv2.equalizeHist(frame_gray)
+    # Erode speckles
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (4, 4))
+    frame_gray = cv2.morphologyEx(frame_gray, cv2.MORPH_OPEN, kernel)
+
+    # Gentle blur
+    frame_gray = cv2.GaussianBlur(frame_gray, (5,5), 0)
 
     # Extend the edges because the blob detector struggles at the edges
-    padding_px = 50
+    padding_px = 0
     padded_frame = cv2.copyMakeBorder(
         frame_gray,
         padding_px, padding_px, padding_px, padding_px,
@@ -91,14 +90,45 @@ def find_pips(frame):
 
     cv2.imwrite('livecam/blurred.findpips.png',padded_frame)
 
-    blobs = detector.detect(padded_frame)
-    #Relocate to original unpadded image
-    for blob in blobs:
-        blob.pt = (blob.pt[0] - padding_px, blob.pt[1] - padding_px)
+    if 0:
+        params = cv2.SimpleBlobDetector_Params()
+        params.minInertiaRatio = 0.70
+        params.minArea = 500.0
+        params.maxArea = 1200.0
+        params.minDistBetweenBlobs = 25.0
+        detector = cv2.SimpleBlobDetector_create(params)
+        blobs = detector.detect(padded_frame)
+        #Relocate to original unpadded image
+        for blob in blobs:
+            blob.pt = (blob.pt[0] - padding_px, blob.pt[1] - padding_px)
+        pip_locations = np.array([np.array(b.pt) for b in blobs])
+        pip_radii = np.array([b.size/2 for b in blobs])
+        pip_indices = pip_locations.astype(np.int32)
+    else:
+        canny_edges = cv2.Canny(padded_frame, 90, 45)
+        cv2.imwrite('livecam/canny_edges.png', canny_edges)
 
-    pip_locations = np.array([np.array(b.pt) for b in blobs])
-    pip_radii = np.array([b.size/2 for b in blobs])
-    pip_indices = pip_locations.astype(np.int32)
+        #Hough circle detection
+        circles = cv2.HoughCircles(
+            padded_frame,
+            method=cv2.HOUGH_GRADIENT_ALT,
+            dp=2.0,  # Inverse resolution (1 = same size as input)
+            minDist=10,  # Min distance between circle centers
+            param1=90,  # Canny high threshold (lower threshold = param1/2)
+            #param2=25,  # Circle detection threshold (lower = more sensitive)
+            param2=0.9,
+            minRadius=9,  # Min expected radius
+            maxRadius=16  # Max expected radius
+        )
+        # For some reason circles has an extra dimension
+        circles = circles[0] if circles is not None else []
+        for circle in circles:
+            # each row is x, y, radius
+            circle[0] -= padding_px
+            circle[1] -= padding_px
+        pip_locations = np.array([np.array(c[:2]) for c in circles])
+        pip_radii = np.array([c[2] for c in circles])
+        pip_indices = pip_locations.astype(np.int32)
 
     if len(pip_indices) == 0:
         # No pips detected
@@ -107,20 +137,24 @@ def find_pips(frame):
     frame_blurred_hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
     pip_colors = frame_blurred_hsv[pip_indices[:,1],pip_indices[:,0]]
-    
-    die_color_sample_pos_eps = np.ceil(1.1*pip_radii).astype(np.int32)
-    die_color_sample_pos_eps_diag = np.ceil(np.sqrt(2)*die_color_sample_pos_eps).astype(np.int32)
-    die_color_samples = [
-        frame_blurred_hsv[pip_indices[:,1] + die_color_sample_pos_eps, pip_indices[:,0]],        
-        frame_blurred_hsv[pip_indices[:,1], pip_indices[:,0] + die_color_sample_pos_eps],        
-        frame_blurred_hsv[pip_indices[:,1] - die_color_sample_pos_eps, pip_indices[:,0]],        
-        frame_blurred_hsv[pip_indices[:,1], pip_indices[:,0] - die_color_sample_pos_eps],
-        frame_blurred_hsv[pip_indices[:,1] + die_color_sample_pos_eps_diag, pip_indices[:,0] + die_color_sample_pos_eps_diag],
-        frame_blurred_hsv[pip_indices[:,1] - die_color_sample_pos_eps_diag, pip_indices[:,0] - die_color_sample_pos_eps_diag],
-        frame_blurred_hsv[pip_indices[:,1] + die_color_sample_pos_eps_diag, pip_indices[:,0] - die_color_sample_pos_eps_diag],
-        frame_blurred_hsv[pip_indices[:,1] - die_color_sample_pos_eps_diag, pip_indices[:,0] + die_color_sample_pos_eps_diag]
-    ]
-    die_colors = np.median(die_color_samples, axis=0)
+
+    if 0:
+        die_color_sample_pos_eps = np.ceil(1.1*pip_radii).astype(np.int32)
+        die_color_sample_pos_eps_diag = np.ceil(np.sqrt(2)*die_color_sample_pos_eps).astype(np.int32)
+        die_color_samples = [
+            frame_blurred_hsv[pip_indices[:,1] + die_color_sample_pos_eps, pip_indices[:,0]],
+            frame_blurred_hsv[pip_indices[:,1], pip_indices[:,0] + die_color_sample_pos_eps],
+            frame_blurred_hsv[pip_indices[:,1] - die_color_sample_pos_eps, pip_indices[:,0]],
+            frame_blurred_hsv[pip_indices[:,1], pip_indices[:,0] - die_color_sample_pos_eps],
+            frame_blurred_hsv[pip_indices[:,1] + die_color_sample_pos_eps_diag, pip_indices[:,0] + die_color_sample_pos_eps_diag],
+            frame_blurred_hsv[pip_indices[:,1] - die_color_sample_pos_eps_diag, pip_indices[:,0] - die_color_sample_pos_eps_diag],
+            frame_blurred_hsv[pip_indices[:,1] + die_color_sample_pos_eps_diag, pip_indices[:,0] - die_color_sample_pos_eps_diag],
+            frame_blurred_hsv[pip_indices[:,1] - die_color_sample_pos_eps_diag, pip_indices[:,0] + die_color_sample_pos_eps_diag]
+        ]
+        die_colors = np.median(die_color_samples, axis=0)
+    else:
+        #FIXME: The above is broken and I don't want to figure out what it's trying to do
+        die_colors = pip_colors
 
     np_pips = np.concatenate((pip_locations, pip_radii[:,None], pip_colors, die_colors), axis=1)
     #code.interact(local=locals())
@@ -179,7 +213,7 @@ def make_die_color_graph(pips, error_threshold_hsv = np.array([0.05, 0.1, 0.2]))
 def make_distance_graph(pips, error_threshold = 1):
     positions = slice_by(pips, 'location')
     edges = set()
-    if len(pips > 1):
+    if len(pips) > 3:
         print("Start delaunay...")
         gabriel = lw.Gabriel(positions)
         print("Done.")
@@ -188,9 +222,19 @@ def make_distance_graph(pips, error_threshold = 1):
             for j in neighbors:
                 to_add = (i,j) if i<j else (j,i)
                 edges.add(to_add)
+    elif len(pips) > 1:
+        for i in range(len(pips)-1):
+            for j in range(i,len(pips),1):
+                edges.add( (i,j) )
     # edges now contains the unique edges in the Gabriel graph
     # Gel the order
     edges = np.array(list(edges))
+
+    if len(edges) == 0:
+        #Return early
+        graph = nx.Graph()
+        graph.add_nodes_from(range(len(pips)))
+        return graph
 
     # Construct an array of pairs of locations
     edge_locations = positions[edges]
