@@ -53,8 +53,27 @@ def drawText(text, xcenter, ycenter, size:int = 14, anchor='center'):
     font = ("Helvetica", size, "bold")
     shadow_sep = 3
     #canvas.create_text(xcenter - shadow_sep, ycenter - shadow_sep, text=text, fill="black", font=font, anchor=anchor)
-    canvas.create_text(xcenter + shadow_sep, ycenter + shadow_sep, text=text, fill="black", font=font, anchor=anchor)
-    canvas.create_text(xcenter, ycenter, text=text, fill="white", font=font, anchor=anchor)
+    text_id = canvas.create_text(xcenter + shadow_sep, ycenter + shadow_sep, text=text, fill="black", font=font, anchor=anchor)
+    shadow_id = canvas.create_text(xcenter, ycenter, text=text, fill="white", font=font, anchor=anchor)
+    return (text_id, shadow_id)
+
+splash_img = PIL.ImageTk.PhotoImage(PIL.Image.open("splash.png").resize((display_w,display_h)))
+
+gui_top_row_offset = 30
+gui_bot_row_offset = 90
+gui_bg_img = canvas.create_image(0, 0, anchor="nw", image=splash_img)
+gui_overlay_img = canvas.create_image(0, 0, anchor="nw")
+# X- Label
+gui_x_minus_label = drawText(str(gui_state.slider_val  ) + '-', 50, gui_top_row_offset, 30)
+# X+ Label
+gui_x_plus_label = drawText(str(gui_state.slider_val+1) + '+', display_w-50, gui_top_row_offset, 30)
+# Count label
+# Never changes so we don't keep reference
+gui_count_label = drawText(str("COUNT"), display_w/2, gui_top_row_offset, 30)
+
+gui_x_minus_val = drawText('...', 60, gui_bot_row_offset, 65)
+gui_x_plus_val  = drawText('...', display_w - 60, gui_bot_row_offset, 65)
+gui_count_val   = drawText('...', display_w / 2, gui_bot_row_offset, 65)
 
 # Slider (Scale) – positioned proportionally
 slider = tk.Scale(
@@ -70,27 +89,43 @@ slider = tk.Scale(
 )
 slider.place(relx=0.1, rely=0.9, relwidth=0.8, relheight=0.1)
 
+# Create the button
+exit_button = tk.Button(root, text="X", command=root.quit, padx=10, pady=10)
+
+# Position it in the bottom-left corner
+exit_button.place(x=10, rely=1.0, anchor='sw')  #
+
 def refreshCanvas():
     if threading.current_thread() is not threading.main_thread():
         # Only run from main thread
         root.after(0, refreshCanvas)
         return
-    top_row_offset = 30
-    bot_row_offset = 90
+
+    def writeTextConfig(item_id_tuple, text):
+        for val in item_id_tuple:
+            canvas.itemconfig(val, text=text)
+
     if gui_state.bg_img:
-        canvas.create_image(0, 0, image=gui_state.bg_img, anchor="nw")
+        canvas.itemconfig(gui_bg_img, image=gui_state.bg_img)
+        #canvas.create_image(0, 0, image=gui_state.bg_img, anchor="nw")
     if gui_state.pip_img:
-        canvas.create_image(0, 0, image=gui_state.pip_img, anchor="nw")
+        canvas.itemconfig(gui_overlay_img, image=gui_state.pip_img)
+        #canvas.create_image(0, 0, image=gui_state.pip_img, anchor="nw")
     # X- Label
-    drawText(str(gui_state.slider_val  ) + '-', 50, top_row_offset, 30)
+    #drawText(str(gui_state.slider_val  ) + '-', 50, top_row_offset, 30)
+    writeTextConfig(gui_x_minus_label, str(gui_state.slider_val  ) + '-')
     # X+ Label
-    drawText(str(gui_state.slider_val+1) + '+', display_w-50, top_row_offset, 30)
+    #drawText(str(gui_state.slider_val+1) + '+', display_w-50, top_row_offset, 30)
+    writeTextConfig(gui_x_plus_label, text=str(gui_state.slider_val+1) + '+')
     # Count label
-    drawText(str("COUNT"), display_w/2, top_row_offset, 30)
+    #drawText(str("COUNT"), display_w/2, top_row_offset, 30)
     def drawResultLabels(count, low, high):
-        drawText(str(low), 60, bot_row_offset, 65)
-        drawText(str(high), display_w - 60, bot_row_offset, 65)
-        drawText(str(count), display_w / 2, bot_row_offset, 65)
+        writeTextConfig(gui_count_val, text=str(count))
+        writeTextConfig(gui_x_minus_val, text=str(low))
+        writeTextConfig(gui_x_plus_val, text=str(high))
+        #drawText(str(low), 60, bot_row_offset, 65)
+        #drawText(str(high), display_w - 60, bot_row_offset, 65)
+        #drawText(str(count), display_w / 2, bot_row_offset, 65)
     if len(gui_state.disp_result) == 6:
         low_count  = sum(gui_state.disp_result[:gui_state.slider_val])
         high_count = sum(gui_state.disp_result[gui_state.slider_val:])
@@ -103,6 +138,9 @@ def detectionThread(img):
     results, overlay_img = vision.do_recognition(img, "livecam")
     print(results)
     roll_counts = [results.count(val) for val in range(1, 7)]
+    # REVERSE ROLL COUNTS BECAUSE WE ARE READING THE BOTTOMS OF THE DICE, SO THE TOPS ARE OPPOSITE
+    # 1->6, 2->5, etc.
+    roll_counts = roll_counts[::-1]
     overlay_img = cv2.resize(overlay_img, (display_w, display_h))
     overlay_img = cv2.cvtColor(overlay_img, cv2.COLOR_BGRA2RGBA)
     pil_img = PIL.Image.fromarray(overlay_img, "RGBA")
@@ -133,10 +171,10 @@ def workerThread():
         pil_img = PIL.Image.fromarray(disp_img)
         gui_state.bg_img = PIL.ImageTk.PhotoImage(image=pil_img)
         refreshCanvas()
-        # Start doing detection in the background
         detectionThread(img)
 
-if ImageSource.onRaspi():
+if False and ImageSource.onRaspi():
+    # This behavior is actually just too annoying, it flickers.
     threading.Thread(target=workerThread, daemon=True).start()
 else:
     canvas.bind("<Button-1>", on_button_press)
