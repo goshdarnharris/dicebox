@@ -1,7 +1,6 @@
 import tkinter as tk
 import cv2
 import PIL.Image, PIL.ImageTk  # To convert OpenCV images to a format Tkinter can display
-import numpy as np
 
 from dataclasses import dataclass
 from typing import List
@@ -50,9 +49,10 @@ canvas = tk.Canvas(root)
 canvas.pack(fill='both', expand=True)
 
 def drawText(text, xcenter, ycenter, size:int = 14, anchor='center'):
+    # Creates matching text objects, white on black to give a shadow effect.
+    # Update these later with itemConfig. Don't just keep creating new text objects, that is laggy.
     font = ("Helvetica", size, "bold")
     shadow_sep = 3
-    #canvas.create_text(xcenter - shadow_sep, ycenter - shadow_sep, text=text, fill="black", font=font, anchor=anchor)
     text_id = canvas.create_text(xcenter + shadow_sep, ycenter + shadow_sep, text=text, fill="black", font=font, anchor=anchor)
     shadow_id = canvas.create_text(xcenter, ycenter, text=text, fill="white", font=font, anchor=anchor)
     return (text_id, shadow_id)
@@ -68,7 +68,6 @@ gui_x_minus_label = drawText(str(gui_state.slider_val  ) + '-', 50, gui_top_row_
 # X+ Label
 gui_x_plus_label = drawText(str(gui_state.slider_val+1) + '+', display_w-50, gui_top_row_offset, 30)
 # Count label
-# Never changes so we don't keep reference
 gui_count_label = drawText(str("COUNT"), display_w/2, gui_top_row_offset, 30)
 
 gui_x_minus_val = drawText('...', 60, gui_bot_row_offset, 65)
@@ -89,13 +88,13 @@ slider = tk.Scale(
 )
 slider.place(relx=0.1, rely=0.9, relwidth=0.8, relheight=0.1)
 
-# Create the button
+# Create the button and place in bottom left
 exit_button = tk.Button(root, text="X", command=root.quit, padx=10, pady=10)
-
-# Position it in the bottom-left corner
 exit_button.place(x=10, rely=1.0, anchor='sw')  #
 
 def refreshCanvas():
+    # Updates the tk graphical elements based on the elements of gui_state.
+    # TODO: Still generates a white "flicker" frame that I can't figure out how to get around.
     if threading.current_thread() is not threading.main_thread():
         # Only run from main thread
         root.after(0, refreshCanvas)
@@ -107,25 +106,17 @@ def refreshCanvas():
 
     if gui_state.bg_img:
         canvas.itemconfig(gui_bg_img, image=gui_state.bg_img)
-        #canvas.create_image(0, 0, image=gui_state.bg_img, anchor="nw")
     if gui_state.pip_img:
         canvas.itemconfig(gui_overlay_img, image=gui_state.pip_img)
-        #canvas.create_image(0, 0, image=gui_state.pip_img, anchor="nw")
     # X- Label
-    #drawText(str(gui_state.slider_val  ) + '-', 50, top_row_offset, 30)
     writeTextConfig(gui_x_minus_label, str(gui_state.slider_val  ) + '-')
     # X+ Label
-    #drawText(str(gui_state.slider_val+1) + '+', display_w-50, top_row_offset, 30)
     writeTextConfig(gui_x_plus_label, text=str(gui_state.slider_val+1) + '+')
     # Count label
-    #drawText(str("COUNT"), display_w/2, top_row_offset, 30)
     def drawResultLabels(count, low, high):
         writeTextConfig(gui_count_val, text=str(count))
         writeTextConfig(gui_x_minus_val, text=str(low))
         writeTextConfig(gui_x_plus_val, text=str(high))
-        #drawText(str(low), 60, bot_row_offset, 65)
-        #drawText(str(high), display_w - 60, bot_row_offset, 65)
-        #drawText(str(count), display_w / 2, bot_row_offset, 65)
     if len(gui_state.disp_result) == 6:
         low_count  = sum(gui_state.disp_result[:gui_state.slider_val])
         high_count = sum(gui_state.disp_result[gui_state.slider_val:])
@@ -134,7 +125,10 @@ def refreshCanvas():
     else:
         drawResultLabels('...','...','...')
 
-def detectionThread(img):
+def detectionTask(img):
+    # This function is intended to be run in the background, as it will take a few hundred ms.
+    # Takes the provided img argument and runs dice recognition on it.
+    # Then refresh the canvas.
     results, overlay_img = vision.do_recognition(img, "livecam")
     print(results)
     roll_counts = [results.count(val) for val in range(1, 7)]
@@ -149,11 +143,14 @@ def detectionThread(img):
     refreshCanvas()
 
 def on_button_press(evt):
+    # Take an image, launch a background thread to recognize dice.
+    # In the foreground, display the raw image on the screen so the user can see that an image was taken.
+
     # Clear the result
     gui_state.disp_result = []
     img = ImageSource.getImage()
     # Start doing detection in the background
-    threading.Thread(target=detectionThread, daemon=True, args=(img,)).start()
+    threading.Thread(target=detectionTask, daemon=True, args=(img,)).start()
 
     disp_img = cv2.resize(img, (display_w, display_h))
     # Convert from BGR (OpenCV) to RGB (Tkinter/PIL expects RGB)
@@ -163,6 +160,10 @@ def on_button_press(evt):
     refreshCanvas()
 
 def workerThread():
+    # This thread is defunct for now. The intent it to constantly process and run dice recognition so the user
+    # never has to touch the screen or do anything except roll dice. But the processing is a little too slow and
+    # the screen flickers with every refresh, so this mode is annoying to look at.
+    # TODO: Maybe revive this if you solve the flicker problem.
     while True:
         img = ImageSource.getImage()
         disp_img = cv2.resize(img, (display_w, display_h))
@@ -171,7 +172,7 @@ def workerThread():
         pil_img = PIL.Image.fromarray(disp_img)
         gui_state.bg_img = PIL.ImageTk.PhotoImage(image=pil_img)
         refreshCanvas()
-        detectionThread(img)
+        detectionTask(img)
 
 if False and ImageSource.onRaspi():
     # This behavior is actually just too annoying, it flickers.
@@ -179,4 +180,5 @@ if False and ImageSource.onRaspi():
 else:
     canvas.bind("<Button-1>", on_button_press)
 
+# TK event loop never returns.
 root.mainloop()

@@ -1,0 +1,12 @@
+In this repository:
+Code to recognize 6-sided dice from a source image and return the roll results (number of 1s, 2s, 3s, etc)
+And a GUI for running on the dicebox/raspi itself, which provides a touchscreen interface to snap pictures
+from the raspi cam live and display results.
+
+GUI.py - Entrypoint if running on raspi. If run locally on your desktop, it will display the raspi GUI in a window and
+    spoof images by sourcing them from the images directory.
+main.py -  Old entrypoint for running locally against test images.
+
+ImageSource.py - Abstraction layer for grabbing images from the library or the camera as appropriate based on run context
+libpip.py - library for recognizing dice pips
+solver.py - library for building graphs of dice pips and associating them into die faces to determine rolls

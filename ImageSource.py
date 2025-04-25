@@ -59,7 +59,10 @@ try:
     def close():
         picam.close()
     def onRaspi()->bool: return True
+
 except Exception as e:
+    # If we end up here, we are not on the raspi so we will assume we're on a test rig.
+    # We should load test images and supply them as if they came from the camera.
     print("Failed to open live camera feed. Using cached images.")
     print("Failure was: ", e)
     src_dir = 'images/final_box_45'
@@ -73,6 +76,5 @@ except Exception as e:
         return img
     def close():
         pass
-
 
     def onRaspi() -> bool: return False
