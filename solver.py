@@ -254,6 +254,8 @@ def graph_write(graph, path):
     plt.close()
 
 def solve_graph_outlines(image, outlines, pips, prepend_figs = ""):
+    # JHW since right now we're just trying to get reliable recognition on identical white 8mm dice,
+    # the color segmentation below is not relevant. Probably re-enable later when we expand the problem space.
     #size_graph = libpip.make_size_graph(pips, error_threshold = 0.2)
     #print("SIZE:", len(size_graph.edges))
     #color_graph = libpip.make_color_graph(pips, error_threshold_hsv = np.array([0.2, 0.2, 0.2]))
@@ -274,7 +276,7 @@ def solve_graph_outlines(image, outlines, pips, prepend_figs = ""):
     print("Done.")
 
     for edge, loss in zip(edges, edge_outline_losses):
-        if loss > 2.0: # Empirical
+        if loss > 2.0: # Empirical magic number
             dice_graph.remove_edge(*edge)
 
     dice = []

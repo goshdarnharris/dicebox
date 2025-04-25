@@ -8,7 +8,6 @@ import libpysal.weights as lw
 
 # FIXME: For some reason the first call to lw.Gabriel() is insanely slow (10s-ish)
 # Front-load it so we don't have to wait during our first interaction
-
 if 1:
     dummy = np.array( ((0,0), (1,1), (0,1)) )
     print("Starting dummy gabriel...")
@@ -91,6 +90,7 @@ def find_pips(frame):
     cv2.imwrite('livecam/blurred.findpips.png',padded_frame)
 
     if 0:
+        # Original blob-based pip detection
         params = cv2.SimpleBlobDetector_Params()
         params.minInertiaRatio = 0.70
         params.minArea = 500.0
@@ -105,6 +105,10 @@ def find_pips(frame):
         pip_radii = np.array([b.size/2 for b in blobs])
         pip_indices = pip_locations.astype(np.int32)
     else:
+        # JHW: Hough circle-based pip detection was more reliable in my testing, especially near the edges of the image
+
+        # Internally the circle detector works on Canny edges, so we will generate a test image just for our reference.
+        # This image is for human diagnostic purposes only.
         canny_edges = cv2.Canny(padded_frame, 90, 45)
         cv2.imwrite('livecam/canny_edges.png', canny_edges)
 
@@ -214,7 +218,11 @@ def make_distance_graph(pips, error_threshold = 1):
     positions = slice_by(pips, 'location')
     edges = set()
     if len(pips) > 3:
-        print("Start delaunay...")
+        # If we have enough pips, do a Gabriel triangulation. This is O(N logN) ish to calculate.
+        # This is a triangulation where for every 3 fully connected nodes, you are guaranteed there are no
+        # nodes in the circumscribed circle. Gives us a pretty cheap low density graph were nearest neighbors
+        # are guaranteed to be connected.
+        print("Start Gabriel...")
         gabriel = lw.Gabriel(positions)
         print("Done.")
 
@@ -223,6 +231,7 @@ def make_distance_graph(pips, error_threshold = 1):
                 to_add = (i,j) if i<j else (j,i)
                 edges.add(to_add)
     elif len(pips) > 1:
+        # Not enough edges for a Gabriel graph, just fully connect the nodes
         for i in range(len(pips)-1):
             for j in range(i,len(pips),1):
                 edges.add( (i,j) )
@@ -251,6 +260,7 @@ def make_distance_graph(pips, error_threshold = 1):
 
     # Optimization: From observation, we know that we don't see edges within a die which are > 7ish pip-radii long
     # Exclude all edges with length > 10
+    # TODO: Will need to revisit this if we use different dice
     short_edges = np.array([
         row for row in labeled_edges
         if row[2]['distance'] < 10.0
@@ -284,6 +294,8 @@ def make_six_graph():
 six_graph = make_six_graph()
 
 def fast_profile_sum(image, p0, p1):
+    # This is a rougher but much faster version of skimage.measure.profile_line. That function does interpolation
+    # and antialiasing which make it slow. We don't care about that, we just want to sample every pixel the line crosses.
     rr, cc = skimage.draw.line(int(p0[1]), int(p0[0]), int(p1[1]), int(p1[0]))
     return np.float32(np.sum(image[rr, cc]))
 
@@ -293,9 +305,6 @@ def calculate_outline_loss(pips, edges, outlines, loss = 1):
     for edge in edges:
         pip_a = locations[edge[0]]
         pip_b = locations[edge[1]]
-        #profile = skimage.measure.profile_line(outlines, (pip_a[1], pip_a[0]), (pip_b[1], pip_b[0]),
-        #                                       order=0, mode='nearest')
-        #this_loss = np.sum(profile.astype(np.float32)/255)*loss
         this_loss = fast_profile_sum(outlines, (pip_a[0], pip_a[1]), (pip_b[0], pip_b[1]))
         this_loss /= 255.0
         losses.append(this_loss)

@@ -11,8 +11,6 @@ from functools import partial
 from inspect import signature
 from typing import List
 
-from numpy.ma.core import zeros_like
-
 import libpip
 import solver
 
@@ -89,9 +87,12 @@ def crop(x_slice, y_slice):
 def get_outlines(image, pips, prepend_imwrite = ""):    
     open_kernel = np.ones((3, 3), np.uint8)
 
+    # Clahe extends the dynamic range of the image on a localized basis. It's like a normalizeHist which works on
+    # the image in parts but with graceful edges
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(6, 6))
-    #frame_gray = clahe.apply(frame_gray)
 
+    # This image pipeline is tuned empirically and has lots of room for improvement.
+    # TODO: make this a jupiter notebook? Would make experimentation easier.
     outlines = (monad(image) 
         >> partial(cv2.cvtColor, code = cv2.COLOR_BGR2GRAY)
             >> write_image(f'{prepend_imwrite}outline.gray.png')
@@ -155,6 +156,9 @@ def do_recognition(im:cv2.Mat, debug_dir)->List[int]:
     os.makedirs(debug_dir, exist_ok=True)
     
     with output.indent(2):
+        # TODO: Empirically, this bilateral filter helps a lot as it smooths things out and reduces speckles
+        # substantially. But it's very expensive to calculate (this is dictated by the 'd' parameter) and accounts
+        # for the majority of all processing time presently (2025 04 24).
         image_detect = (image 
             >> write_image(f'{debug_dir}/original.png')
             >> partial(cv2.bilateralFilter, d = 30, sigmaColor = 25, sigmaSpace = 75)
