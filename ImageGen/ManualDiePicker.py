@@ -2,12 +2,9 @@ import tkinter as tk
 from PIL import Image, ImageTk, ImageOps
 import os
 import numpy as np
-import tensorflow as tf
+from ThrowAnalyzer import analyze_throw
 
 # Settings
-tflite_model_path = "dice_cnn.tflite"
-finder_targets_dir = "finder_targets"
-model_input_size = 20
 image_dir = '../images/final_box_20_dice/'
 image_names = ['%02d.jpg'%i for i in range(10)]
 image_paths = [os.path.join(image_dir, name) for name in image_names]
@@ -42,38 +39,6 @@ image_width = 0
 image_height = 0
 annotations = []  # list of (box, digit, save_path) for undo support
 
-# === TFLite Model ===
-interpreter = tf.lite.Interpreter(model_path=tflite_model_path)
-interpreter.allocate_tensors()
-input_details = interpreter.get_input_details()
-output_details = interpreter.get_output_details()
-
-def load_heatmap(image_path):
-    """Load pre-generated heatmap target for this image."""
-    base = os.path.splitext(os.path.basename(image_path))[0]
-    target_path = os.path.join(finder_targets_dir, f"target_{base}.png")
-    if os.path.exists(target_path):
-        return Image.open(target_path).convert("L")
-    return None
-
-def overlay_heatmap(pil_image, heatmap_img):
-    """Composite a red heatmap at 50% opacity over the original image."""
-    red_overlay = Image.merge("RGB", (
-        heatmap_img,
-        Image.new("L", heatmap_img.size, 0),
-        Image.new("L", heatmap_img.size, 0),
-    ))
-    return Image.blend(pil_image, red_overlay, alpha=0.5)
-
-def predict_crop(pil_image):
-    """Run TFLite inference on a cropped PIL image. Returns predicted class."""
-    gray = pil_image.convert("L").resize((model_input_size, model_input_size))
-    arr = np.array(gray, dtype=np.float32) / 255.0
-    arr = arr.reshape(1, model_input_size, model_input_size, 1)
-    interpreter.set_tensor(input_details[0]['index'], arr)
-    interpreter.invoke()
-    output = interpreter.get_tensor(output_details[0]['index'])
-    return int(np.argmax(output))
 
 # === Functions ===
 
@@ -82,18 +47,20 @@ def load_image(index):
     original_image = Image.open(image_paths[index]).convert("RGB")
     image_width, image_height = original_image.size
 
-    # Overlay pre-generated heatmap target if available
-    heatmap_img = load_heatmap(image_paths[index])
-    if heatmap_img:
-        display_image = overlay_heatmap(original_image, heatmap_img)
-    else:
-        display_image = original_image
-
-    tk_image = ImageTk.PhotoImage(display_image)
+    tk_image = ImageTk.PhotoImage(original_image)
     canvas.config(width=image_width, height=image_height)
-    canvas.itemconfig(canvas_img, image=tk_image)
-    canvas.coords(canvas_img, 0, 0)
+    canvas.create_image(0, 0, anchor=tk.NW, image=tk_image)
     move_next_button()
+
+    # Run ThrowAnalyzer and draw results
+    print("Running ThrowAnalyzer...")
+    results = analyze_throw(original_image)
+    half = crop_size // 2
+    for x, y, face, die_conf, id_conf in results:
+        box = (x - half, y - half, x + half, y + half)
+        canvas.create_rectangle(box[0], box[1], box[2], box[3], outline="green", width=2)
+        canvas.create_text(x, y, text=str(face), fill="green", font=("Arial", 20, "bold"))
+    print(f"Found {len(results)} dice.")
 
 def average_border_fill(image, box):
     avg_color = tuple(np.array(image).reshape(-1, 3).mean(axis=0).astype(np.uint8))
@@ -116,15 +83,7 @@ def on_click(event):
     last_crop_box = box
     last_crop_coords = (x, y)
     canvas.create_rectangle(box[0], box[1], box[2], box[3], outline="red", width=2)
-
-    # Show CNN prediction to the left of center
-    cropped = average_border_fill(original_image, box)
-    prediction = predict_crop(cropped)
-    label_x = (box[0] + box[2]) // 2 - 30
-    label_y = (box[1] + box[3]) // 2
-    canvas.create_text(label_x, label_y, text=str(prediction), fill="cyan", font=("Arial", 16, "bold"))
-
-    print(f"Click registered. CNN predicts: {prediction}. Awaiting number key 0–6...")
+    print("Click registered. Awaiting number key 0–6...")
 
 def on_keypress(event):
     global last_crop_box, last_crop_coords
@@ -190,8 +149,6 @@ def next_image():
     last_crop_coords = None
     canvas.delete("all")
     load_image(current_index)
-    canvas.create_image(0, 0, anchor=tk.NW, image=tk_image)
-    move_next_button()
 
 # === GUI Setup ===
 root = tk.Tk()

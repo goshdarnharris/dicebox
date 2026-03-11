@@ -1,86 +1,105 @@
 import os
 import numpy as np
 import tensorflow as tf
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report, confusion_matrix
+from PIL import Image
 
 # === Settings ===
-captures_dir = "augmented"
-input_size = 20
-batch_size = 1024
+image_dir = '../images/final_box_20_dice/'
+targets_dir = "finder_targets"
+downsample = 9  # source images are downsampled by this factor before feeding to CNN
 epochs = 2000
-patience = 100
+patience = 200
+batch_size = 4  # small because each sample is a full image
 
 # === Load Data ===
-def load_dataset(captures_dir):
-    images = []
-    labels = []
-    for fname in os.listdir(captures_dir):
-        if not fname.endswith(".png"):
+# Each training pair is: (downsampled source image, downsampled target heatmap)
+# The CNN has 2 MaxPool(2) layers, so its output is 1/4 the input in each dimension.
+# The target heatmap must be downsampled to match the CNN output size.
+
+def load_dataset():
+    inputs = []
+    targets = []
+    for fname in sorted(os.listdir(targets_dir)):
+        if not fname.startswith("target_") or not fname.endswith(".png"):
             continue
-        digit = fname.split("_")[0]
-        if not digit.isdigit():
+        # Derive source image name: target_00.png -> 00.jpg
+        base = fname.replace("target_", "").replace(".png", "")
+        source_path = os.path.join(image_dir, base + ".jpg")
+        target_path = os.path.join(targets_dir, fname)
+
+        if not os.path.exists(source_path):
+            print(f"Warning: source image not found: {source_path}")
             continue
-        label = int(digit)
-        if label < 0 or label > 6:
-            continue
-        path = os.path.join(captures_dir, fname)
-        img = tf.keras.utils.load_img(path, color_mode="grayscale", target_size=(input_size, input_size))
-        images.append(tf.keras.utils.img_to_array(img))
-        # Binary: 0 = not a die, 1-6 = die center
-        labels.append(0.0 if label == 0 else 1.0)
-    return np.array(images, dtype=np.float32) / 255.0, np.array(labels, dtype=np.float32)
+
+        # Load and downsample source image
+        src = Image.open(source_path).convert("L")
+        w, h = src.size
+        small_w, small_h = w // downsample, h // downsample
+        src_small = src.resize((small_w, small_h))
+        src_arr = np.array(src_small, dtype=np.float32) / 255.0
+
+        # Load and downsample target heatmap to CNN output size (1/4 of input due to 2 MaxPools)
+        tgt = Image.open(target_path).convert("L")
+        out_w, out_h = small_w // 2, small_h // 2
+        tgt_small = tgt.resize((out_w, out_h), Image.BILINEAR)
+        tgt_arr = np.array(tgt_small, dtype=np.float32) / 255.0
+
+        inputs.append(src_arr[:, :, np.newaxis])   # (h, w, 1)
+        targets.append(tgt_arr[:, :, np.newaxis])  # (h/4, w/4, 1)
+
+        print(f"  {base}: input {small_w}x{small_h} -> output {out_w}x{out_h}")
+
+    return inputs, targets
 
 print("Loading dataset...")
-X, y = load_dataset(captures_dir)
-print(f"Loaded {len(X)} images")
-print(f"  Not die: {int(np.sum(y == 0))}")
-print(f"  Die center: {int(np.sum(y == 1))}")
+inputs, targets = load_dataset()
+print(f"Loaded {len(inputs)} image pairs")
 
-X_train, X_val, y_train, y_val = train_test_split(
-    X, y, test_size=0.2, random_state=42, stratify=y
-)
-print(f"Train: {len(X_train)}, Val: {len(X_val)}")
-
-# === Class Weights ===
-n_neg = np.sum(y_train == 0)
-n_pos = np.sum(y_train == 1)
-class_weight = {0: len(y_train) / (2 * n_neg), 1: len(y_train) / (2 * n_pos)}
-print(f"Class weights: {class_weight}")
+# Split into train/val
+n = len(inputs)
+n_val = max(1, n // 5)
+n_train = n - n_val
+X_train = np.array(inputs[:n_train])
+Y_train = np.array(targets[:n_train])
+X_val = np.array(inputs[n_train:])
+Y_val = np.array(targets[n_train:])
+print(f"Train: {n_train}, Val: {n_val}")
 
 # === Model ===
 # Fully convolutional — no Dense or Flatten layers.
-# This allows the model to accept any input size at inference and produce
-# a spatial heatmap of "die center probability" when GlobalAveragePooling is removed.
+# Input: downsampled grayscale image (None, None, 1)
+# Output: heatmap at 1/4 resolution (None, None, 1) with sigmoid activation
 
-def build_finder_model(input_shape):
-    inputs = tf.keras.Input(shape=input_shape)
+def build_finder_model():
+    inputs = tf.keras.Input(shape=(None, None, 1))
 
-    # Conv layers extract features at decreasing spatial resolution
-    x = tf.keras.layers.Conv2D(16, 5, padding="same", activation="relu")(inputs)   # -> 20x20x8
-    x = tf.keras.layers.MaxPooling2D(2)(x)                                         # -> 10x10x8
-    x = tf.keras.layers.Conv2D(8, 3, padding="same", activation="relu")(x)        # -> 10x10x16
-    x = tf.keras.layers.MaxPooling2D(2)(x)                                         # -> 5x5x16
-    x = tf.keras.layers.Conv2D(16, 3, padding="same", activation="relu")(x)  # -> 5x5x32
-    x = tf.keras.layers.SpatialDropout2D(0.1)(x)
-
-    # 1x1 conv reduces to a single channel — each spatial position is a
-    # "die center score". At training size (20x20) this is 5x5x1.
-    x = tf.keras.layers.Conv2D(1, 1, padding="same", activation="sigmoid")(x)      # -> 5x5x1
-
-    # GlobalAveragePooling collapses spatial dims for training on per-image labels.
-    # Remove this layer at inference to get the full spatial heatmap.
-    outputs = tf.keras.layers.GlobalAveragePooling2D()(x)                           # -> 1
+    x = tf.keras.layers.Conv2D(8, 15, padding="same", activation="relu")(inputs)
+    x = tf.keras.layers.MaxPooling2D(2)(x)
+    x = tf.keras.layers.Conv2D(16, 7, padding="same", activation="relu")(x)
+    #x = tf.keras.layers.MaxPooling2D(2)(x)
+    #x = tf.keras.layers.SpatialDropout2D(0.1)(x)
+    x = tf.keras.layers.Conv2D(32, 3, padding="same", activation="relu")(x)
+    #x = tf.keras.layers.SpatialDropout2D(0.1)(x)
+    outputs = tf.keras.layers.Conv2D(1, 1, padding="same", activation="sigmoid")(x)
 
     return tf.keras.Model(inputs, outputs)
 
-model = build_finder_model((input_size, input_size, 1))
+model = build_finder_model()
 model.summary()
 
+def weighted_bce(y_true, y_pred):
+    """Binary crossentropy weighted by (target + bias) so die centers matter more."""
+    bias = 0.05
+    k = 10
+    weight = y_true + bias
+    weight *= k
+    bce = tf.keras.losses.binary_crossentropy(y_true, y_pred)
+    return tf.reduce_mean(bce * weight[..., 0])
+
 model.compile(
-    optimizer="adam",
-    loss="binary_crossentropy",
-    metrics=["accuracy"],
+    optimizer=tf.keras.optimizers.Adam(learning_rate=0.01),
+    loss=weighted_bce,
+    metrics=["mae"],
 )
 
 # === Train ===
@@ -89,47 +108,45 @@ callbacks = [
         monitor="val_loss", patience=patience, restore_best_weights=True
     ),
     tf.keras.callbacks.ReduceLROnPlateau(
-        monitor="val_loss", factor=0.75, patience=10, min_lr=1e-7, verbose=1
+        monitor="val_loss", factor=0.75, patience=30, min_lr=1e-7, verbose=1
     ),
 ]
 
 history = model.fit(
-    X_train, y_train,
-    validation_data=(X_val, y_val),
+    X_train, Y_train,
+    validation_data=(X_val, Y_val),
     epochs=epochs,
     batch_size=batch_size,
-    class_weight=class_weight,
     callbacks=callbacks,
 )
 
 # === Evaluate ===
-val_loss, val_acc = model.evaluate(X_val, y_val, verbose=0)
-print(f"\nValidation accuracy: {val_acc:.3f}")
+val_loss, val_mae = model.evaluate(X_val, Y_val, verbose=0)
+print(f"\nValidation loss: {val_loss:.4f}, MAE: {val_mae:.4f}")
 
-y_pred_raw = model.predict(X_val, verbose=0).flatten()
-y_pred = (y_pred_raw > 0.5).astype(np.int32)
-y_val_int = y_val.astype(np.int32)
-
-print("\nClassification Report:")
-print(classification_report(y_val_int, y_pred, target_names=["not die", "die center"]))
-print("Confusion Matrix:")
-print(confusion_matrix(y_val_int, y_pred))
-
-# === Save Wrong Predictions ===
-from PIL import Image
+# === Save predicted heatmaps for inspection ===
 wrongs_dir = "wrongs_finder"
 os.makedirs(wrongs_dir, exist_ok=True)
 for f in os.listdir(wrongs_dir):
     os.remove(os.path.join(wrongs_dir, f))
-wrong_count = 0
-for i in range(len(y_val)):
-    if y_pred[i] != y_val_int[i]:
-        img_array = (X_val[i, :, :, 0] * 255).astype(np.uint8)
-        img = Image.fromarray(img_array, mode="L")
-        fname = f"true{y_val_int[i]}_pred{y_pred[i]}_conf{y_pred_raw[i]:.2f}_{i}.png"
-        img.save(os.path.join(wrongs_dir, fname))
-        wrong_count += 1
-print(f"\nSaved {wrong_count} wrong predictions to {wrongs_dir}/")
+
+X_all = np.concatenate([X_train, X_val], axis=0)
+Y_all = np.concatenate([Y_train, Y_val], axis=0)
+for i in range(len(X_all)):
+    pred = model.predict(X_all[i:i+1], verbose=0)[0, :, :, 0]
+    actual = Y_all[i, :, :, 0]
+
+    pred_img = Image.fromarray((pred * 255).astype(np.uint8), mode="L")
+    actual_img = Image.fromarray((actual * 255).astype(np.uint8), mode="L")
+
+    # Save side by side: actual | predicted
+    label = "train" if i < len(X_train) else "val"
+    combined = Image.new("L", (pred_img.width * 2, pred_img.height))
+    combined.paste(actual_img, (0, 0))
+    combined.paste(pred_img, (pred_img.width, 0))
+    combined.save(os.path.join(wrongs_dir, f"{label}_{i}_actual_vs_pred.png"))
+
+print(f"Saved {len(X_all)} actual vs predicted comparisons to {wrongs_dir}/")
 
 # === Save ===
 keras_path = "die_finder_cnn.keras"
