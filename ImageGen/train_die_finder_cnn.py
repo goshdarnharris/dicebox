@@ -4,51 +4,44 @@ import tensorflow as tf
 from PIL import Image
 
 # === Settings ===
-image_dir = '../images/final_box_20_dice/'
-targets_dir = "finder_targets"
-downsample = 9  # source images are downsampled by this factor before feeding to CNN
+images_dir = "finder_augmented/images"
+targets_dir = "finder_augmented/targets"
 epochs = 2000
 patience = 200
 batch_size = 4  # small because each sample is a full image
 
 # === Load Data ===
-# Each training pair is: (downsampled source image, downsampled target heatmap)
-# The CNN has 2 MaxPool(2) layers, so its output is 1/4 the input in each dimension.
-# The target heatmap must be downsampled to match the CNN output size.
+# Images are already downsampled by augment_finder.py.
+# Target heatmaps are downsampled to match CNN output size (1/2 of input due to 1 MaxPool).
 
 def load_dataset():
     inputs = []
     targets = []
-    for fname in sorted(os.listdir(targets_dir)):
-        if not fname.startswith("target_") or not fname.endswith(".png"):
+    for fname in sorted(os.listdir(images_dir)):
+        if not fname.endswith(".png"):
             continue
-        # Derive source image name: target_00.png -> 00.jpg
-        base = fname.replace("target_", "").replace(".png", "")
-        source_path = os.path.join(image_dir, base + ".jpg")
+        source_path = os.path.join(images_dir, fname)
         target_path = os.path.join(targets_dir, fname)
 
-        if not os.path.exists(source_path):
-            print(f"Warning: source image not found: {source_path}")
+        if not os.path.exists(target_path):
+            print(f"Warning: target not found for {fname}")
             continue
 
-        # Load and downsample source image
+        # Load pre-downsampled source image
         src = Image.open(source_path).convert("L")
-        w, h = src.size
-        small_w, small_h = w // downsample, h // downsample
-        src_small = src.resize((small_w, small_h))
-        src_arr = np.array(src_small, dtype=np.float32) / 255.0
+        src_arr = np.array(src, dtype=np.float32) / 255.0
+        small_w, small_h = src.size
 
-        # Load and downsample target heatmap to CNN output size (1/4 of input due to 2 MaxPools)
+        # Load and downsample target heatmap to CNN output size (1/2 of input due to 1 MaxPool)
         tgt = Image.open(target_path).convert("L")
         out_w, out_h = small_w // 2, small_h // 2
         tgt_small = tgt.resize((out_w, out_h), Image.BILINEAR)
         tgt_arr = np.array(tgt_small, dtype=np.float32) / 255.0
 
         inputs.append(src_arr[:, :, np.newaxis])   # (h, w, 1)
-        targets.append(tgt_arr[:, :, np.newaxis])  # (h/4, w/4, 1)
+        targets.append(tgt_arr[:, :, np.newaxis])  # (h/2, w/2, 1)
 
-        print(f"  {base}: input {small_w}x{small_h} -> output {out_w}x{out_h}")
-
+    print(f"  Loaded {len(inputs)} pairs, input {small_w}x{small_h} -> output {out_w}x{out_h}")
     return inputs, targets
 
 print("Loading dataset...")
