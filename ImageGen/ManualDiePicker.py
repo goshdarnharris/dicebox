@@ -6,6 +6,7 @@ import tensorflow as tf
 
 # Settings
 tflite_model_path = "dice_cnn.tflite"
+finder_targets_dir = "finder_targets"
 model_input_size = 20
 image_dir = '../images/final_box_20_dice/'
 image_names = ['%02d.jpg'%i for i in range(10)]
@@ -47,6 +48,23 @@ interpreter.allocate_tensors()
 input_details = interpreter.get_input_details()
 output_details = interpreter.get_output_details()
 
+def load_heatmap(image_path):
+    """Load pre-generated heatmap target for this image."""
+    base = os.path.splitext(os.path.basename(image_path))[0]
+    target_path = os.path.join(finder_targets_dir, f"target_{base}.png")
+    if os.path.exists(target_path):
+        return Image.open(target_path).convert("L")
+    return None
+
+def overlay_heatmap(pil_image, heatmap_img):
+    """Composite a red heatmap at 50% opacity over the original image."""
+    red_overlay = Image.merge("RGB", (
+        heatmap_img,
+        Image.new("L", heatmap_img.size, 0),
+        Image.new("L", heatmap_img.size, 0),
+    ))
+    return Image.blend(pil_image, red_overlay, alpha=0.5)
+
 def predict_crop(pil_image):
     """Run TFLite inference on a cropped PIL image. Returns predicted class."""
     gray = pil_image.convert("L").resize((model_input_size, model_input_size))
@@ -63,7 +81,15 @@ def load_image(index):
     global original_image, tk_image, image_width, image_height
     original_image = Image.open(image_paths[index]).convert("RGB")
     image_width, image_height = original_image.size
-    tk_image = ImageTk.PhotoImage(original_image)
+
+    # Overlay pre-generated heatmap target if available
+    heatmap_img = load_heatmap(image_paths[index])
+    if heatmap_img:
+        display_image = overlay_heatmap(original_image, heatmap_img)
+    else:
+        display_image = original_image
+
+    tk_image = ImageTk.PhotoImage(display_image)
     canvas.config(width=image_width, height=image_height)
     canvas.itemconfig(canvas_img, image=tk_image)
     canvas.coords(canvas_img, 0, 0)

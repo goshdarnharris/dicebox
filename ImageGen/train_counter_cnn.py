@@ -71,7 +71,7 @@ def build_conv_layers(x):
 
     # Third conv: 16 filters of 3x3, combining mid-level features into high-level
     # patterns (pip arrangements, die structure).
-    x = tf.keras.layers.Conv2D(128, 3, padding="same", activation="relu")(x)
+    x = tf.keras.layers.Conv2D(32, 3, padding="same", activation="relu")(x)
     x = tf.keras.layers.MaxPooling2D(2)(x)
 
     # 5x5x32
@@ -79,7 +79,7 @@ def build_conv_layers(x):
     # Flatten: reshape
     # so they can be fed into a Dense (fully connected) layer.
     x = tf.keras.layers.Flatten()(x)
-    x = tf.keras.layers.Dense(50, activation="relu")(x)
+    x = tf.keras.layers.Dense(64, activation="relu")(x)
     return x
 
 inputs = tf.keras.Input(shape=(input_size, input_size, 1))
