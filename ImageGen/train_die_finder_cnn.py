@@ -146,10 +146,18 @@ keras_path = "die_finder_cnn.keras"
 model.save(keras_path)
 print(f"\nSaved Keras model: {keras_path}")
 
-# Export TFLite
+# Export TFLite (int8 quantized)
 converter = tf.lite.TFLiteConverter.from_keras_model(model)
+converter.optimizations = [tf.lite.Optimize.DEFAULT]
+def representative_data():
+    for i in range(min(200, len(X_train))):
+        yield [X_train[i:i+1]]
+converter.representative_dataset = representative_data
+converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
+converter.inference_input_type = tf.uint8
+converter.inference_output_type = tf.uint8
 tflite_model = converter.convert()
 tflite_path = "die_finder_cnn.tflite"
 with open(tflite_path, "wb") as f:
     f.write(tflite_model)
-print(f"Saved TFLite model: {tflite_path}")
+print(f"Saved TFLite model (int8): {tflite_path}")

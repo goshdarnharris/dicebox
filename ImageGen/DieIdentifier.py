@@ -27,11 +27,19 @@ def identify_die(pil_image, input_size=_input_size):
         and confidence is the softmax probability.
     """
     gray = pil_image.convert("L").resize((input_size, input_size))
-    arr = np.array(gray, dtype=np.float32) / 255.0
-    arr = arr.reshape(1, input_size, input_size, 1)
+    input_dtype = _input_details[0]['dtype']
+    if input_dtype == np.uint8:
+        arr = np.array(gray, dtype=np.uint8).reshape(1, input_size, input_size, 1)
+    else:
+        arr = (np.array(gray, dtype=np.float32) / 255.0).reshape(1, input_size, input_size, 1)
     _interpreter.set_tensor(_input_details[0]['index'], arr)
     _interpreter.invoke()
     output = _interpreter.get_tensor(_output_details[0]['index'])[0]
+    # Dequantize if int8 output
+    out_detail = _output_details[0]
+    if output.dtype == np.uint8:
+        scale, zero_point = out_detail['quantization']
+        output = (output.astype(np.float32) - zero_point) * scale
     face_value = int(np.argmax(output))
     confidence = float(output[face_value])
     return face_value, confidence
