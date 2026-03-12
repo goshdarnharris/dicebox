@@ -1,7 +1,7 @@
 import numpy as np
 from PIL import Image
-from DieFinder import find_dice
-from DieIdentifier import identify_die
+from DieFinder.DieFinder import find_dice
+from DieClassifier.DieClassifier import identify_die
 
 # === Settings ===
 crop_size = 180

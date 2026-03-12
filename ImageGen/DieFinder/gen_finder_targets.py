@@ -4,9 +4,9 @@ import numpy as np
 from PIL import Image
 
 # === Settings ===
-image_dir = '../images/final_box_20_dice/'
+image_dir = '../../images/final_box_20_dice/'
 locations_file = "die_locations.json"
-output_dir = "finder_targets"
+output_dir = "targets"
 gaussian_sigma = 10  # (sigma * 2 = visiblish width)
 
 # === Load die locations ===

@@ -4,12 +4,12 @@ import tensorflow as tf
 from PIL import Image
 
 # === Settings ===
-captures_dir = "captures"
-output_dir = "augmented"
+captures_dir = "raw_training"
+output_dir = "augmented_training"
 crop_size = 180
 downsample = 9
 input_size = crop_size // downsample
-copies_per_image = 20  # how many augmented variants to generate per original
+copies_per_image = 20  # how many augmented_training variants to generate per original
 
 # === Augmentation ===
 augmentation = tf.keras.Sequential([
@@ -49,7 +49,7 @@ for fname in sorted(os.listdir(captures_dir)):
     Image.fromarray(orig_out, mode="L").save(os.path.join(output_dir, f"{base}_orig.png"))
     count += 1
 
-    # Generate augmented copies
+    # Generate augmented_training copies
     batch = np.stack([arr] * copies_per_image)  # (copies, h, w, 1)
     augmented = augmentation(batch, training=True).numpy()
     noise = np.random.normal(0, 0.025, augmented.shape).astype(np.float32)

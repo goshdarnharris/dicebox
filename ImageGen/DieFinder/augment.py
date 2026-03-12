@@ -4,12 +4,12 @@ import tensorflow as tf
 from PIL import Image
 
 # === Settings ===
-image_dir = '../images/final_box_20_dice/'
-targets_dir = 'finder_targets'
-output_images_dir = 'finder_augmented/images'
-output_targets_dir = 'finder_augmented/targets'
+image_dir = '../../images/final_box_20_dice/'
+targets_dir = 'targets'
+output_images_dir = 'augmented_training/images'
+output_targets_dir = 'augmented_training/targets'
 copies_per_image = 20
-downsample = 9  # must match train_die_finder_cnn.py
+downsample = 9  # must match train_die_finder.py
 
 # Photometric augmentation only — no spatial transforms needed
 # because the fully convolutional finder CNN is already spatially invariant.
@@ -48,7 +48,7 @@ for fname in sorted(os.listdir(targets_dir)):
     src_small = src.resize((small_w, small_h))
     src_arr = np.array(src_small, dtype=np.float32) / 255.0  # (h, w)
 
-    # Load target heatmap (stays unchanged for all augmented copies)
+    # Load target heatmap (stays unchanged for all augmented_training copies)
     tgt = Image.open(target_path).convert("L")
 
     # Save original
@@ -58,7 +58,7 @@ for fname in sorted(os.listdir(targets_dir)):
     tgt.save(os.path.join(output_targets_dir, f"{base}_orig.png"))
     count += 1
 
-    # Generate augmented copies
+    # Generate augmented_training copies
     # augmentation expects (batch, h, w, channels)
     batch = np.stack([src_arr[:, :, np.newaxis]] * copies_per_image)
     augmented = augmentation(batch, training=True).numpy()
@@ -70,8 +70,8 @@ for fname in sorted(os.listdir(targets_dir)):
         Image.fromarray(aug_img, mode="L").save(
             os.path.join(output_images_dir, f"{base}_aug{i:02d}.png")
         )
-        # Target is the same for all augmented versions of this image
+        # Target is the same for all augmented_training versions of this image
         tgt.save(os.path.join(output_targets_dir, f"{base}_aug{i:02d}.png"))
         count += 1
 
-print(f"Generated {count} image/target pairs in finder_augmented/")
+print(f"Generated {count} image/target pairs in augmented_training/")

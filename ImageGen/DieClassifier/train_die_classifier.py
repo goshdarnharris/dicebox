@@ -5,7 +5,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import confusion_matrix, classification_report
 
 # === Settings ===
-captures_dir = "augmented"
+captures_dir = "augmented_training"
 #crop_size = 180
 #downsample = 9
 input_size = 20 # 180 image size reduced 9x by augmentation script
@@ -128,9 +128,9 @@ print(confusion_matrix(y_val, y_pred))
 
 # === Save Wrong Predictions ===
 from PIL import Image
-wrongs_dir = "wrongs"
+wrongs_dir = "wrong_results"
 os.makedirs(wrongs_dir, exist_ok=True)
-# Clear previous wrongs
+# Clear previous wrong_results
 for f in os.listdir(wrongs_dir):
     os.remove(os.path.join(wrongs_dir, f))
 wrong_count = 0

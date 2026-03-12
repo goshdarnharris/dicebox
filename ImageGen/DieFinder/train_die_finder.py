@@ -4,14 +4,14 @@ import tensorflow as tf
 from PIL import Image
 
 # === Settings ===
-images_dir = "finder_augmented/images"
-targets_dir = "finder_augmented/targets"
+images_dir = "augmented_training/images"
+targets_dir = "augmented_training/targets"
 epochs = 2000
 patience = 200
 batch_size = 4  # small because each sample is a full image
 
 # === Load Data ===
-# Images are already downsampled by augment_finder.py.
+# Images are already downsampled by augment.py.
 # Target heatmaps are downsampled to match CNN output size (1/2 of input due to 1 MaxPool).
 
 def load_dataset():
@@ -118,7 +118,7 @@ val_loss, val_mae = model.evaluate(X_val, Y_val, verbose=0)
 print(f"\nValidation loss: {val_loss:.4f}, MAE: {val_mae:.4f}")
 
 # === Save predicted heatmaps for inspection ===
-wrongs_dir = "wrongs_finder"
+wrongs_dir = "wrong_results"
 os.makedirs(wrongs_dir, exist_ok=True)
 for f in os.listdir(wrongs_dir):
     os.remove(os.path.join(wrongs_dir, f))

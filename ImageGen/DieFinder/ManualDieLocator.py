@@ -4,7 +4,7 @@ import os
 import json
 
 # Settings
-image_dir = '../images/final_box_20_dice/'
+image_dir = '../../images/final_box_20_dice/'
 image_names = ['%02d.jpg' % i for i in range(10)]
 image_paths = [os.path.join(image_dir, name) for name in image_names]
 output_file = "die_locations.json"

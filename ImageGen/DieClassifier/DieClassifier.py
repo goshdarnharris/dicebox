@@ -51,7 +51,7 @@ if __name__ == "__main__":
 
     path = sys.argv[1] if len(sys.argv) > 1 else None
     if path is None:
-        print("Usage: python DieIdentifier.py <image_path>")
+        print("Usage: python DieClassifier.py <image_path>")
         sys.exit(1)
 
     img = Image.open(path)

@@ -9,7 +9,7 @@ image_dir = '../images/final_box_20_dice/'
 image_names = ['%02d.jpg'%i for i in range(10)]
 image_paths = [os.path.join(image_dir, name) for name in image_names]
 crop_size = 180
-output_dir = "captures"
+output_dir = "DieClassifier/raw_training"
 os.makedirs(output_dir, exist_ok=True)
 processed_log = os.path.join(output_dir, "processed.txt")
 
