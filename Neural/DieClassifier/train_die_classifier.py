@@ -1,13 +1,12 @@
 import os
 import numpy as np
 import tensorflow as tf
+import h5py
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import confusion_matrix, classification_report
 
 # === Settings ===
-captures_dir = "augmented_training"
-#crop_size = 180
-#downsample = 9
+dataset_file = "augmented_training.h5"
 input_size = 20 # 180 image size reduced 9x by augmentation script
 num_classes = 7
 batch_size = 1024
@@ -15,26 +14,10 @@ epochs = 2000
 patience = 100
 
 # === Load Data ===
-def load_dataset(captures_dir):
-    images = []
-    labels = []
-    for fname in os.listdir(captures_dir):
-        if not fname.endswith(".png"):
-            continue
-        digit = fname.split("_")[0]
-        if not digit.isdigit():
-            continue
-        label = int(digit)
-        if label < 0 or label > 6:
-            continue
-        path = os.path.join(captures_dir, fname)
-        img = tf.keras.utils.load_img(path, color_mode="grayscale", target_size=(input_size, input_size))
-        images.append(tf.keras.utils.img_to_array(img))
-        labels.append(label)
-    return np.array(images, dtype=np.float32) / 255.0, np.array(labels, dtype=np.int32)
-
 print("Loading dataset...")
-X, y = load_dataset(captures_dir)
+with h5py.File(dataset_file, "r") as hf:
+    X = hf["images"][:][..., np.newaxis]  # (N, 20, 20, 1)
+    y = hf["labels"][:]
 print(f"Loaded {len(X)} images")
 for c in range(num_classes):
     print(f"  Class {c}: {np.sum(y == c)} images")

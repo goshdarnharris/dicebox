@@ -3,13 +3,14 @@ import json
 import random
 import numpy as np
 import tensorflow as tf
+import h5py
 from PIL import Image
 
 # === Settings ===
 image_dir = '../training_images'
 annotations_file = os.path.join(image_dir, 'annotations.json')
 raw_dir = "raw_training"
-output_dir = "augmented_training"
+output_file = "augmented_training.h5"
 crop_size = 180
 downsample = 9
 input_size = crop_size // downsample
@@ -18,7 +19,7 @@ copies_per_image = 10
 # === Augmentation ===
 augmentation = tf.keras.Sequential([
     tf.keras.layers.RandomRotation(0.3, fill_mode="nearest"),
-    tf.keras.layers.RandomBrightness([-0.5, 0.5], value_range=[0.0, 1.0]),
+    tf.keras.layers.RandomBrightness([-0.25, 0.25], value_range=[0.0, 1.0]),
     tf.keras.layers.RandomContrast(0.25),
 ])
 
@@ -38,20 +39,20 @@ def average_border_fill(image, box):
     return padded
 
 
-# === Setup output dirs ===
-for d in [raw_dir, output_dir]:
-    os.makedirs(d, exist_ok=True)
-    for f in os.listdir(d):
-        fp = os.path.join(d, f)
-        if os.path.isfile(fp):
-            os.remove(fp)
+# === Setup raw_training dir ===
+os.makedirs(raw_dir, exist_ok=True)
+for f in os.listdir(raw_dir):
+    fp = os.path.join(raw_dir, f)
+    if os.path.isfile(fp):
+        os.remove(fp)
 
 # === Load annotations ===
 with open(annotations_file, "r") as f:
     all_annotations = json.load(f)
 
 # === Generate ===
-count = 0
+all_images = []
+all_labels = []
 half = crop_size // 2
 for rel_path in sorted(all_annotations.keys()):
     print(f"Processing {rel_path}...")
@@ -93,14 +94,11 @@ for rel_path in sorted(all_annotations.keys()):
 
         # Downsample to training input size, convert to grayscale
         crop_small = crop.convert("L").resize((input_size, input_size))
-        arr = np.array(crop_small, dtype=np.float32) / 255.0  # (input_size, input_size)
+        arr = np.array(crop_small, dtype=np.float32) / 255.0
 
-        # Save original
-        orig_name = f"{face}_{safe_base}_{x}_{y}_orig.png"
-        Image.fromarray((arr * 255).astype(np.uint8), mode="L").save(
-            os.path.join(output_dir, orig_name)
-        )
-        count += 1
+        # Add original
+        all_images.append(arr)
+        all_labels.append(face)
 
         # Generate augmented copies
         batch = np.stack([arr[:, :, np.newaxis]] * copies_per_image)
@@ -108,10 +106,16 @@ for rel_path in sorted(all_annotations.keys()):
         noise = np.random.normal(0, 0.025, augmented.shape).astype(np.float32)
         augmented = np.clip(augmented + noise, 0, 1)
         for i in range(copies_per_image):
-            aug_img = (augmented[i, :, :, 0] * 255).astype(np.uint8)
-            Image.fromarray(aug_img, mode="L").save(
-                os.path.join(output_dir, f"{face}_{safe_base}_{x}_{y}_aug{i:02d}.png")
-            )
-            count += 1
+            all_images.append(augmented[i, :, :, 0])
+            all_labels.append(face)
 
-print(f"Generated {count} images in {output_dir}/")
+# === Save to HDF5 ===
+images_arr = np.array(all_images, dtype=np.float32)
+labels_arr = np.array(all_labels, dtype=np.int32)
+with h5py.File(output_file, "w") as hf:
+    hf.create_dataset("images", data=images_arr, compression="gzip")
+    hf.create_dataset("labels", data=labels_arr)
+
+print(f"Generated {len(all_images)} images -> {output_file}")
+for c in range(7):
+    print(f"  Class {c}: {np.sum(labels_arr == c)}")

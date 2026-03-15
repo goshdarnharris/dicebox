@@ -1,11 +1,11 @@
 import os
 import numpy as np
 import tensorflow as tf
+import h5py
 from PIL import Image
 
 # === Settings ===
-images_dir = "augmented_training/images"
-targets_dir = "augmented_training/targets"
+dataset_file = "augmented_training.h5"
 epochs = 2000
 patience = 200
 batch_size = 8  # small because each sample is a full image
@@ -14,39 +14,28 @@ batch_size = 8  # small because each sample is a full image
 # Images are already downsampled by augment.py.
 # Target heatmaps are downsampled to match CNN output size (1/2 of input due to 1 MaxPool).
 
-def load_dataset():
-    inputs = []
-    targets = []
-    for fname in sorted(os.listdir(images_dir)):
-        if not fname.endswith(".png"):
-            continue
-        source_path = os.path.join(images_dir, fname)
-        target_path = os.path.join(targets_dir, fname)
-
-        if not os.path.exists(target_path):
-            print(f"Warning: target not found for {fname}")
-            continue
-
-        # Load pre-downsampled source image
-        src = Image.open(source_path).convert("L")
-        src_arr = np.array(src, dtype=np.float32) / 255.0
-        small_w, small_h = src.size
-
-        # Load and downsample target heatmap to CNN output size (1/2 of input due to 1 MaxPool)
-        tgt = Image.open(target_path).convert("L")
-        out_w, out_h = small_w // 2, small_h // 2
-        tgt_small = tgt.resize((out_w, out_h), Image.BILINEAR)
-        tgt_arr = np.array(tgt_small, dtype=np.float32) / 255.0
-
-        inputs.append(src_arr[:, :, np.newaxis])   # (h, w, 1)
-        targets.append(tgt_arr[:, :, np.newaxis])  # (h/2, w/2, 1)
-
-    print(f"  Loaded {len(inputs)} pairs, input {small_w}x{small_h} -> output {out_w}x{out_h}")
-    return inputs, targets
-
 print("Loading dataset...")
-inputs, targets = load_dataset()
-print(f"Loaded {len(inputs)} image pairs")
+with h5py.File(dataset_file, "r") as hf:
+    raw_images = hf["images"][:]
+    raw_targets = hf["targets"][:]
+print(f"Loaded {len(raw_images)} image/target pairs")
+
+# Downsample targets to CNN output size (1/2 due to MaxPool)
+inputs = []
+targets = []
+for i in range(len(raw_images)):
+    src_arr = raw_images[i]
+    h, w = src_arr.shape
+    out_h, out_w = h // 2, w // 2
+
+    tgt = Image.fromarray((raw_targets[i] * 255).astype(np.uint8), mode="L")
+    tgt_small = tgt.resize((out_w, out_h), Image.BILINEAR)
+    tgt_arr = np.array(tgt_small, dtype=np.float32) / 255.0
+
+    inputs.append(src_arr[:, :, np.newaxis])
+    targets.append(tgt_arr[:, :, np.newaxis])
+
+print(f"  Input: {w}x{h} -> Output: {out_w}x{out_h}")
 
 # Split into train/val
 n = len(inputs)
