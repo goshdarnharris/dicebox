@@ -6,8 +6,9 @@ from dataclasses import dataclass
 from typing import List
 
 import ImageSource
-# Our local vision library. Maybe change name?
-import vision
+import sys
+sys.path.insert(0, 'Neural')
+from ThrowAnalyzer import analyze_throw
 
 import threading
 
@@ -129,16 +130,15 @@ def detectionTask(img):
     # This function is intended to be run in the background, as it will take a few hundred ms.
     # Takes the provided img argument and runs dice recognition on it.
     # Then refresh the canvas.
-    results, overlay_img = vision.do_recognition(img, "livecam")
-    print(results)
-    roll_counts = [results.count(val) for val in range(1, 7)]
+    # Convert BGR OpenCV image to RGB PIL for ThrowAnalyzer
+    pil_img = PIL.Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+    results = analyze_throw(pil_img)
+    face_values = [face for _, _, face, _, _ in results]
+    print(face_values)
+    roll_counts = [face_values.count(val) for val in range(1, 7)]
     # REVERSE ROLL COUNTS BECAUSE WE ARE READING THE BOTTOMS OF THE DICE, SO THE TOPS ARE OPPOSITE
     # 1->6, 2->5, etc.
     roll_counts = roll_counts[::-1]
-    overlay_img = cv2.resize(overlay_img, (display_w, display_h))
-    overlay_img = cv2.cvtColor(overlay_img, cv2.COLOR_BGRA2RGBA)
-    pil_img = PIL.Image.fromarray(overlay_img, "RGBA")
-    gui_state.pip_img = PIL.ImageTk.PhotoImage(image=pil_img)
     gui_state.disp_result = roll_counts
     refreshCanvas()
 

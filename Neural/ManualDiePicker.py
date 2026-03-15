@@ -6,41 +6,37 @@ import numpy as np
 from ThrowAnalyzer import analyze_throw
 
 # Settings
-image_dir = 'training_images/'
-image_names = sorted(f for f in os.listdir(image_dir) if f.lower().endswith(('.jpg', '.png', '.jpeg')))
-image_paths = [os.path.join(image_dir, name) for name in image_names]
+image_dir = 'training_images'
+image_paths = sorted(
+    os.path.join(root, f)
+    for root, _, files in os.walk(image_dir)
+    for f in files
+    if f.lower().endswith(('.jpg', '.png', '.jpeg'))
+)
 crop_size = 180
-crop_output_dir = "DieClassifier/raw_training"
-locations_output = "DieFinder/die_locations.json"
-os.makedirs(crop_output_dir, exist_ok=True)
-processed_log = os.path.join(crop_output_dir, "processed.txt")
+annotations_file = os.path.join(image_dir, "annotations.json")
 click_radius = crop_size // 4  # how close a click must be to an existing die to remove it
 
-def load_processed():
-    if not os.path.exists(processed_log):
-        return set()
-    with open(processed_log, "r") as f:
-        return set(line.strip() for line in f if line.strip())
-
-def mark_processed(image_path):
-    with open(processed_log, "a") as f:
-        f.write(image_path + "\n")
-
-# Load existing die locations
-if os.path.exists(locations_output):
-    with open(locations_output, "r") as f:
-        all_locations = json.load(f)
+# Load existing annotations
+if os.path.exists(annotations_file):
+    with open(annotations_file, "r") as f:
+        all_annotations = json.load(f)
 else:
-    all_locations = {}
+    all_annotations = {}
 
-processed = load_processed()
-image_paths = [p for p in image_paths if p not in processed]
-if not image_paths:
-    print("All images have already been processed.")
-    exit(0)
+# Start on the first un-annotated image, but keep all images navigable
+start_index = 0
+for i, p in enumerate(image_paths):
+    rel = os.path.relpath(p, image_dir).replace("\\", "/")
+    if rel not in all_annotations:
+        start_index = i
+        break
+else:
+    # All annotated — start on the last one
+    start_index = len(image_paths) - 1
 
 # === Globals ===
-current_index = 0
+current_index = start_index
 original_image = None
 tk_image = None
 image_width = 0
@@ -51,11 +47,17 @@ image_height = 0
 # face_value 0 = not a die (excluded from heatmap, included in classifier training)
 annotations = []
 
+# Annotations from the previous image, for copying to same-roll images
+prev_annotations = []
+
 # Pending click waiting for a keypress
 pending_click = None  # (x, y) or None
 
 
 # === Functions ===
+
+def rel_path_for(index):
+    return os.path.relpath(image_paths[index], image_dir).replace("\\", "/")
 
 def average_border_fill(image, box):
     avg_color = tuple(np.array(image).reshape(-1, 3).mean(axis=0).astype(np.uint8))
@@ -105,7 +107,10 @@ def redraw_canvas():
         px, py = pending_click
         box = (px - half, py - half, px + half, py + half)
         canvas.create_rectangle(box[0], box[1], box[2], box[3], outline="red", width=2)
-    move_next_button()
+    move_buttons()
+    dice_count = sum(1 for _, _, face, _, _ in annotations if face > 0)
+    rel_path = rel_path_for(current_index)
+    root.title(f"Dice Annotation — {rel_path} — {dice_count} dice — [{current_index+1}/{len(image_paths)}]")
 
 def load_image(index):
     global original_image, tk_image, image_width, image_height, pending_click
@@ -117,12 +122,19 @@ def load_image(index):
     tk_image = ImageTk.PhotoImage(original_image)
     canvas.config(width=image_width, height=image_height)
 
-    # Run ThrowAnalyzer to pre-populate annotations
-    print("Running ThrowAnalyzer...")
-    results = analyze_throw(original_image)
-    for x, y, face, die_conf, id_conf in results:
-        annotations.append((x, y, face, die_conf, id_conf))
-    print(f"Auto-detected {len(results)} dice.")
+    rel_path = rel_path_for(index)
+    if rel_path in all_annotations:
+        # Load existing annotations from JSON
+        for x, y, face in all_annotations[rel_path]:
+            annotations.append((x, y, face, None, None))
+        print(f"Loaded {len(annotations)} saved annotations for {rel_path}")
+    else:
+        # Run ThrowAnalyzer to pre-populate annotations
+        print("Running ThrowAnalyzer...")
+        results = analyze_throw(original_image)
+        for x, y, face, die_conf, id_conf in results:
+            annotations.append((x, y, face, die_conf, id_conf))
+        print(f"Auto-detected {len(results)} dice.")
 
     redraw_canvas()
 
@@ -174,34 +186,62 @@ def on_undo(event):
     redraw_canvas()
 
 def save_annotations():
-    """Save cropped images for classifier and die locations for finder."""
-    image_name = os.path.basename(image_paths[current_index])
-    half = crop_size // 2
+    """Save annotations to the central JSON file."""
+    rel_path = rel_path_for(current_index)
+    all_annotations[rel_path] = [[x, y, face] for x, y, face, _, _ in annotations]
+    with open(annotations_file, "w") as f:
+        json.dump(all_annotations, f, indent=2)
+    print(f"Saved {len(annotations)} annotations for {rel_path}")
 
-    # Save cropped images for classifier training
-    for x, y, face, _, _ in annotations:
-        box = (x - half, y - half, x + half, y + half)
-        cropped = average_border_fill(original_image, box)
-        filename = f"{face}_crop_{image_name}_{x}_{y}.png"
-        cropped.save(os.path.join(crop_output_dir, filename))
+def clear_annotations():
+    global pending_click
+    annotations.clear()
+    pending_click = None
+    print("Cleared all annotations.")
+    redraw_canvas()
 
-    # Save die locations for finder training (exclude class-0)
-    locations = [[x, y] for x, y, face, _, _ in annotations if face > 0]
-    all_locations[image_name] = locations
-    with open(locations_output, "w") as f:
-        json.dump(all_locations, f, indent=2)
+def rerun_auto():
+    global pending_click
+    annotations.clear()
+    pending_click = None
+    print("Running ThrowAnalyzer...")
+    results = analyze_throw(original_image)
+    for x, y, face, die_conf, id_conf in results:
+        annotations.append((x, y, face, die_conf, id_conf))
+    print(f"Auto-detected {len(results)} dice.")
+    redraw_canvas()
 
-    print(f"Saved {len(annotations)} crops, {len(locations)} finder locations for {image_name}")
+def copy_prev():
+    global pending_click
+    if not prev_annotations:
+        print("No previous annotations to copy.")
+        return
+    annotations.clear()
+    annotations.extend([(x, y, face, None, None) for x, y, face, _, _ in prev_annotations if face > 0])
+    pending_click = None
+    print(f"Copied {len(annotations)} annotations from previous image.")
+    redraw_canvas()
 
 def next_image():
-    global current_index, pending_click
+    global current_index, pending_click, prev_annotations
     save_annotations()
-    mark_processed(image_paths[current_index])
+    prev_annotations = list(annotations)
     current_index += 1
     if current_index >= len(image_paths):
         print("All images processed.")
         root.destroy()
         return
+    pending_click = None
+    canvas.delete("all")
+    load_image(current_index)
+
+def prev_image():
+    global current_index, pending_click
+    save_annotations()
+    if current_index <= 0:
+        print("Already at first image.")
+        return
+    current_index -= 1
     pending_click = None
     canvas.delete("all")
     load_image(current_index)
@@ -217,15 +257,35 @@ canvas.bind("<Button-1>", on_click)
 root.bind("<Key>", on_keypress)
 root.bind("<BackSpace>", on_undo)
 
-def move_next_button():
+def move_buttons():
     global image_width, image_height
-    next_btn = tk.Button(root, text="Next Image ▶", command=next_image)
+    # Right side buttons
+    next_btn = tk.Button(root, text="Next ▶", command=next_image)
     next_btn_window = canvas.create_window(0, 0, window=next_btn, anchor=tk.NW)
+    copy_btn = tk.Button(root, text="Copy Prev", command=copy_prev)
+    copy_btn_window = canvas.create_window(0, 0, window=copy_btn, anchor=tk.NW)
+    # Left side buttons
+    prev_btn = tk.Button(root, text="◀ Prev", command=prev_image)
+    prev_btn_window = canvas.create_window(0, 0, window=prev_btn, anchor=tk.NW)
+    clear_btn = tk.Button(root, text="Clear", command=clear_annotations)
+    clear_btn_window = canvas.create_window(0, 0, window=clear_btn, anchor=tk.NW)
+    auto_btn = tk.Button(root, text="Re-Auto", command=rerun_auto)
+    auto_btn_window = canvas.create_window(0, 0, window=auto_btn, anchor=tk.NW)
     canvas.update_idletasks()
-    btn_width = next_btn.winfo_reqwidth()
     btn_height = next_btn.winfo_reqheight()
-    canvas.coords(next_btn_window, image_width - btn_width - 5, image_height - btn_height - 5)
+    # Right side positioning
+    next_w = next_btn.winfo_reqwidth()
+    copy_w = copy_btn.winfo_reqwidth()
+    canvas.coords(next_btn_window, image_width - next_w - 5, image_height - btn_height - 5)
+    canvas.coords(copy_btn_window, image_width - next_w - copy_w - 15, image_height - btn_height - 5)
+    # Left side positioning
+    prev_w = prev_btn.winfo_reqwidth()
+    clear_w = clear_btn.winfo_reqwidth()
+    auto_w = auto_btn.winfo_reqwidth()
+    canvas.coords(prev_btn_window, 5, image_height - btn_height - 5)
+    canvas.coords(clear_btn_window, prev_w + 15, image_height - btn_height - 5)
+    canvas.coords(auto_btn_window, prev_w + clear_w + 25, image_height - btn_height - 5)
 
-move_next_button()
+move_buttons()
 load_image(current_index)
 root.mainloop()

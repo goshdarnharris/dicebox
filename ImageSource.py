@@ -65,12 +65,17 @@ except Exception as e:
     # We should load test images and supply them as if they came from the camera.
     print("Failed to open live camera feed. Using cached images.")
     print("Failure was: ", e)
-    src_dir = 'images/final_box_45'
-    fnames = os.listdir(src_dir)
+    src_dir = 'Neural/training_images'
+    image_paths = [
+        os.path.join(root, f)
+        for root, _, files in os.walk(src_dir)
+        for f in files
+        if f.lower().endswith(('.jpg', '.png', '.jpeg'))
+    ]
 
     def getImage():
-        # Load an image at random from the source dir
-        fpath = os.path.join(src_dir, random.choice(fnames))
+        # Load an image at random from the source dir (including subdirs)
+        fpath = random.choice(image_paths)
         print("Loading ", fpath)
         img = cv2.imread(fpath)
         return img

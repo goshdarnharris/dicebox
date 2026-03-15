@@ -8,7 +8,7 @@ images_dir = "augmented_training/images"
 targets_dir = "augmented_training/targets"
 epochs = 2000
 patience = 200
-batch_size = 4  # small because each sample is a full image
+batch_size = 8  # small because each sample is a full image
 
 # === Load Data ===
 # Images are already downsampled by augment.py.
