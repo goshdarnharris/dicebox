@@ -13,53 +13,27 @@ from PIL import Image
 dataset_file = "augmented_training.h5"
 input_size = 20  # 180 image size reduced 9x by augmentation script
 num_classes = 7
-batch_size = 1024
+batch_size = 4096
 epochs = 2000
 patience = 100
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+#device = torch.device("cuda")
 print(f"Using device: {device}")
 
 
 # === Model ===
-class DiceCNN(nn.Module):
-    def __init__(self):
-        super().__init__()
-        # Input: 1x20x20 (grayscale). Pips are ~3px wide at this scale.
-
-        # Conv2D: slide 8 different 3x3 filters across the image, each learning to detect
-        # a different low-level pattern (edges, curves, dark spots). "same" padding keeps
-        # the output the same spatial size. ReLU zeroes out negative values.
-        self.conv1 = nn.Conv2d(1, 8, kernel_size=3, padding=1)   # -> 8x20x20
-        self.pool1 = nn.MaxPool2d(2)                               # -> 8x10x10
-
-        # Second conv: 16 filters of 3x3, combining the 8 edge maps into mid-level
-        # features (pip shapes, corners of dice).
-        self.conv2 = nn.Conv2d(8, 16, kernel_size=3, padding=1)  # -> 16x10x10
-        self.pool2 = nn.MaxPool2d(2)                               # -> 16x5x5
-
-        # Third conv: 32 filters of 3x3, combining mid-level features into high-level
-        # patterns (pip arrangements, die structure).
-        self.conv3 = nn.Conv2d(16, 32, kernel_size=3, padding=1) # -> 32x5x5
-        self.pool3 = nn.MaxPool2d(2)                               # -> 32x2x2
-
-        # Flatten: 32*2*2 = 128
-        self.fc1 = nn.Linear(32 * 2 * 2, 64)
-        self.dropout = nn.Dropout(0.1)
-        self.fc2 = nn.Linear(64, num_classes)
-
-    def forward(self, x):
-        x = torch.relu(self.conv1(x))
-        x = self.pool1(x)
-        x = torch.relu(self.conv2(x))
-        x = self.pool2(x)
-        x = torch.relu(self.conv3(x))
-        x = self.pool3(x)
-        x = x.flatten(1)
-        x = torch.relu(self.fc1(x))
-        x = self.dropout(x)
-        x = self.fc2(x)  # raw logits; softmax applied by CrossEntropyLoss
-        return x
+# Input: 1x20x20 grayscale -> 7 class logits
+DiceCNN = nn.Sequential(
+    nn.Conv2d(1, 8, 3, padding=1), nn.ReLU(),    # -> 8x20x20
+    #nn.Conv2d(8, 8, 3, padding=1), nn.ReLU(),   # -> 8x20x20
+    nn.Conv2d(8, 16, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),    # -> 8x10x10
+    nn.Conv2d(16, 32, 3, padding=1), nn.ReLU(), nn.Dropout2d(0.05), nn.MaxPool2d(2),   # -> 16x5x5
+    #nn.Conv2d(32, 32, 3, padding=1), nn.ReLU(), nn.Dropout2d(0.05),  # -> 32x5x5
+    nn.Flatten(),
+    nn.Linear(32 * 5 * 5, 64), nn.ReLU(), nn.Dropout(0.05),
+    nn.Linear(64, num_classes),  # raw logits; softmax applied by CrossEntropyLoss
+)
 
 
 # === Load Data ===
@@ -67,12 +41,13 @@ print("Loading dataset...")
 with h5py.File(dataset_file, "r") as hf:
     X = hf["images"][:].astype(np.float32)  # (N, 20, 20)
     y = hf["labels"][:].astype(np.int64)
+    sources = hf["sources"][:].astype(str)  # "rel_path:x,y"
 print(f"Loaded {len(X)} images")
 for c in range(num_classes):
     print(f"  Class {c}: {np.sum(y == c)} images")
 
-X_train, X_val, y_train, y_val = train_test_split(
-    X, y, test_size=0.2, random_state=42, stratify=y
+X_train, X_val, y_train, y_val, src_train, src_val = train_test_split(
+    X, y, sources, test_size=0.2, random_state=42, stratify=y
 )
 print(f"Train: {len(X_train)}, Val: {len(X_val)}")
 
@@ -98,15 +73,19 @@ train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
 val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
 
 # === Build Model ===
-model = DiceCNN().to(device)
+model = DiceCNN.to(device)
+pt_path = "dice_cnn.pt"
+if os.path.exists(pt_path):
+    model.load_state_dict(torch.load(pt_path, map_location=device))
+    print(f"Resumed from {pt_path}")
 print(model)
 total_params = sum(p.numel() for p in model.parameters())
 print(f"Total parameters: {total_params:,}")
 
 criterion = nn.CrossEntropyLoss(weight=weight_tensor)
-optimizer = optim.Adam(model.parameters())
+optimizer = optim.Adam(model.parameters(), lr=0.001)
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-    optimizer, mode="min", factor=0.75, patience=10, min_lr=1e-7, verbose=True
+    optimizer, mode="min", factor=0.5, patience=50, min_lr=1e-5, verbose=True
 )
 
 # === Train ===
@@ -154,13 +133,12 @@ for epoch in range(1, epochs + 1):
     scheduler.step(val_loss)
     current_lr = optimizer.param_groups[0]["lr"]
 
-    if epoch % 10 == 0 or epoch == 1:
-        print(
-            f"Epoch {epoch:4d}/{epochs} - "
-            f"loss: {train_loss:.4f} acc: {train_acc:.4f} - "
-            f"val_loss: {val_loss:.4f} val_acc: {val_acc:.4f} - "
-            f"lr: {current_lr:.2e}"
-        )
+    print(
+        f"Epoch {epoch:4d}/{epochs} - "
+        f"loss: {train_loss:.4f} acc: {train_acc:.4f} - "
+        f"val_loss: {val_loss:.4f} val_acc: {val_acc:.4f} - "
+        f"lr: {current_lr:.2e}"
+    )
 
     # --- EarlyStopping with restore_best_weights ---
     if val_loss < best_val_loss:
@@ -208,7 +186,9 @@ for i in range(len(y_val)):
     if y_pred[i] != y_val[i]:
         img_array = (X_val[i] * 255).astype(np.uint8)
         img = Image.fromarray(img_array, mode="L")
-        fname = f"true{y_val[i]}_pred{y_pred[i]}_{i}.png"
+        # Source format: "rel_path:x,y" — make filesystem safe
+        safe_src = src_val[i].replace("/", "_").replace("\\", "_").replace(":", "_")
+        fname = f"true{y_val[i]}_pred{y_pred[i]}_{safe_src}.png"
         img.save(os.path.join(wrongs_dir, fname))
         wrong_count += 1
 print(f"\nSaved {wrong_count} wrong predictions to {wrongs_dir}/")

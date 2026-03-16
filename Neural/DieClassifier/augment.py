@@ -18,13 +18,15 @@ input_size = crop_size // downsample
 copies_per_image = 10
 
 # === Augmentation ===
-# RandomRotation: 0.3 turns = 108 degrees
-# RandomBrightness [-0.25, 0.25] maps to ColorJitter brightness=(0.75, 1.25)
-# RandomContrast 0.25 maps to ColorJitter contrast=(0.75, 1.25)
-augmentation = transforms.Compose([
-    transforms.RandomRotation(108, interpolation=transforms.InterpolationMode.NEAREST, fill=0),
-    transforms.ColorJitter(brightness=0.25, contrast=0.25),
+# Rotation is handled separately on a larger crop to avoid black corners.
+# Only color augmentation is applied via transforms.
+color_augmentation = transforms.Compose([
+    transforms.ColorJitter(brightness=0.15, contrast=0.25),
 ])
+rotation_range = 90  # degrees
+# Outer crop must be large enough that rotating inner crop never hits the edge.
+# For 180x180 inner crop, diagonal is ~255px, so 260x260 outer is sufficient.
+outer_crop_size = int(crop_size * 1.45)
 
 
 def add_gaussian_noise(tensor, sigma=0.025):
@@ -62,6 +64,7 @@ with open(annotations_file, "r") as f:
 # === Generate ===
 all_images = []
 all_labels = []
+all_sources = []  # (rel_path, x, y) for tracing back to annotations
 half = crop_size // 2
 for rel_path in sorted(all_annotations.keys()):
     print(f"Processing {rel_path}...")
@@ -81,7 +84,7 @@ for rel_path in sorted(all_annotations.keys()):
 
     # Generate random negative locations (class 0)
     negatives_per_image = 30
-    min_dist = crop_size // 4
+    min_dist = 1.2 * (crop_size // 4)
     for _ in range(negatives_per_image * 10):  # extra attempts to find valid spots
         if sum(1 for _, _, f in die_entries if f == 0) >= negatives_per_image:
             break
@@ -93,7 +96,7 @@ for rel_path in sorted(all_annotations.keys()):
             centers.append((rx, ry))
 
     for x, y, face in die_entries:
-        # Crop die from source image
+        # Crop die from source image (standard size for raw_training)
         box = (x - half, y - half, x + half, y + half)
         crop = average_border_fill(src, box)
 
@@ -105,26 +108,42 @@ for rel_path in sorted(all_annotations.keys()):
         crop_small = crop.convert("L").resize((input_size, input_size))
         arr = np.array(crop_small, dtype=np.float32) / 255.0
 
-        # Add original
+        # Add original (unaugmented)
+        source = f"{rel_path}:{x},{y}"
         all_images.append(arr)
         all_labels.append(face)
+        all_sources.append(source)
 
-        # Generate augmented copies
-        # Convert grayscale array to PIL Image for torchvision transforms
-        pil_gray = Image.fromarray((arr * 255).astype(np.uint8), mode="L")
+        # For augmented copies, crop a larger region so rotation uses real image data
+        outer_half = outer_crop_size // 2
+        outer_box = (x - outer_half, y - outer_half, x + outer_half, y + outer_half)
+        outer_crop = average_border_fill(src, outer_box).convert("L")
+
         for i in range(copies_per_image):
-            augmented_pil = augmentation(pil_gray)
-            augmented_tensor = transforms.functional.to_tensor(augmented_pil)  # (1, H, W) float32 [0,1]
+            # Rotate the larger crop by a random angle
+            angle = random.uniform(-rotation_range, rotation_range)
+            rotated = outer_crop.rotate(angle, resample=Image.BILINEAR, expand=False)
+            # Crop the inner region (center of rotated image)
+            inner_left = (outer_crop_size - crop_size) // 2
+            inner_top = (outer_crop_size - crop_size) // 2
+            inner = rotated.crop((inner_left, inner_top, inner_left + crop_size, inner_top + crop_size))
+            # Apply color augmentation, downsample, add noise
+            inner_small = inner.resize((input_size, input_size))
+            augmented_pil = color_augmentation(inner_small)
+            augmented_tensor = transforms.functional.to_tensor(augmented_pil)
             augmented_tensor = add_gaussian_noise(augmented_tensor, sigma=0.025)
             all_images.append(augmented_tensor.squeeze(0).numpy())
             all_labels.append(face)
+            all_sources.append(source)
 
 # === Save to HDF5 ===
 images_arr = np.array(all_images, dtype=np.float32)
 labels_arr = np.array(all_labels, dtype=np.int32)
+sources_arr = np.array(all_sources, dtype=h5py.string_dtype())
 with h5py.File(output_file, "w") as hf:
     hf.create_dataset("images", data=images_arr, compression="gzip")
     hf.create_dataset("labels", data=labels_arr)
+    hf.create_dataset("sources", data=sources_arr)
 
 print(f"Generated {len(all_images)} images -> {output_file}")
 for c in range(7):
