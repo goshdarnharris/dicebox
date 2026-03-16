@@ -9,10 +9,10 @@ import os
 _model_path = os.path.join(os.path.dirname(__file__), "DieClassifier", "dice_cnn.onnx")
 _input_size = 20
 _crop_size = 180
-_stride = 14  # pixels between each classifier evaluation
+_stride = 18  # pixels between each classifier evaluation
 _downsample = 9  # crop_size / input_size
 _gaussian_sigma = 0.5
-_min_distance = 4  # in heatmap space (~36px in original)
+_min_distance = 54//_stride  # in heatmap space (~36px in original)
 _threshold = 0.7  # minimum softmax confidence to count
 
 # === Load model once on import ===
@@ -63,12 +63,6 @@ def analyze_throw(pil_image):
     batch = np.array(patches, dtype=np.float32).reshape(-1, 1, _input_size, _input_size)
     logits = _session.run(None, {_input_name: batch})[0]  # (N, 7)
     probs = _softmax(logits)  # (N, 7)
-
-    # DEBUG: show what the classifier sees near y=63
-    for idx, (px, py) in enumerate(positions):
-        if 50 <= py <= 80 and 200 <= px <= 400:
-            best = int(np.argmax(probs[idx]))
-            print(f"  pos=({px},{py}) class={best} probs={probs[idx].round(3)}")
 
     # Build 6-channel heatmap (one per face value 1-6)
     grid_h = len(range(0, img_h, _stride))
