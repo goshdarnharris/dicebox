@@ -15,7 +15,7 @@ input_size = 20  # 180 image size reduced 9x by augmentation script
 num_classes = 7
 batch_size = 4096
 epochs = 2000
-patience = 100
+patience = 200
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 #device = torch.device("cuda")
@@ -23,16 +23,17 @@ print(f"Using device: {device}")
 
 
 # === Model ===
-# Input: 1x20x20 grayscale -> 7 class logits
+# Fully convolutional — no Flatten or Linear layers.
+# On 20x20 input: produces 7x1x1 (same as before).
+# On full downsampled image: produces a 7-channel heatmap in a single pass.
+# Output stride = 9 (downsample) * 4 (two MaxPool2d) = 36 pixels in original image space.
 DiceCNN = nn.Sequential(
-    nn.Conv2d(1, 8, 3, padding=1), nn.ReLU(),    # -> 8x20x20
-    #nn.Conv2d(8, 8, 3, padding=1), nn.ReLU(),   # -> 8x20x20
-    nn.Conv2d(8, 16, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),    # -> 8x10x10
-    nn.Conv2d(16, 32, 3, padding=1), nn.ReLU(), nn.Dropout2d(0.05), nn.MaxPool2d(2),   # -> 16x5x5
-    #nn.Conv2d(32, 32, 3, padding=1), nn.ReLU(), nn.Dropout2d(0.05),  # -> 32x5x5
-    nn.Flatten(),
-    nn.Linear(32 * 5 * 5, 64), nn.ReLU(), nn.Dropout(0.05),
-    nn.Linear(64, num_classes),  # raw logits; softmax applied by CrossEntropyLoss
+    nn.Conv2d(1, 8, 3, padding=1), nn.ReLU(),                          # -> 8x20x20
+    nn.Conv2d(8, 16, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),        # -> 16x10x10
+    nn.Conv2d(16, 16, 3, padding=1), nn.ReLU(), nn.Dropout2d(0.01),
+    nn.Conv2d(16, 32, 3, padding=1), nn.ReLU(), nn.Dropout2d(0.01), nn.MaxPool2d(2),  # -> 32x5x5
+    nn.Conv2d(32, 64, 5), nn.ReLU(), nn.Dropout2d(0.05),               # -> 64x1x1 (replaces Flatten+Linear)
+    nn.Conv2d(64, num_classes, 1),                                      # -> 7x1x1 (replaces final Linear)
 )
 
 
@@ -83,73 +84,77 @@ total_params = sum(p.numel() for p in model.parameters())
 print(f"Total parameters: {total_params:,}")
 
 criterion = nn.CrossEntropyLoss(weight=weight_tensor)
-optimizer = optim.Adam(model.parameters(), lr=0.001)
+optimizer = optim.Adam(model.parameters(), lr=0.01)
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-    optimizer, mode="min", factor=0.5, patience=50, min_lr=1e-5, verbose=True
+    optimizer, mode="min", factor=0.5, patience=100, min_lr=1e-5, verbose=True
 )
 
 # === Train ===
 best_val_loss = float("inf")
 best_state = None
 epochs_without_improvement = 0
+interrupted = False
 
-for epoch in range(1, epochs + 1):
-    # --- Training ---
-    model.train()
-    train_loss = 0.0
-    train_correct = 0
-    train_total = 0
-    for xb, yb in train_loader:
-        xb, yb = xb.to(device), yb.to(device)
-        optimizer.zero_grad()
-        out = model(xb)
-        loss = criterion(out, yb)
-        loss.backward()
-        optimizer.step()
-        train_loss += loss.item() * len(xb)
-        train_correct += (out.argmax(1) == yb).sum().item()
-        train_total += len(xb)
-
-    train_loss /= train_total
-    train_acc = train_correct / train_total
-
-    # --- Validation ---
-    model.eval()
-    val_loss = 0.0
-    val_correct = 0
-    val_total = 0
-    with torch.no_grad():
-        for xb, yb in val_loader:
+try:
+    for epoch in range(1, epochs + 1):
+        # --- Training ---
+        model.train()
+        train_loss = 0.0
+        train_correct = 0
+        train_total = 0
+        for xb, yb in train_loader:
             xb, yb = xb.to(device), yb.to(device)
-            out = model(xb)
+            optimizer.zero_grad()
+            out = model(xb).squeeze(-1).squeeze(-1)  # (N, 7, 1, 1) -> (N, 7)
             loss = criterion(out, yb)
-            val_loss += loss.item() * len(xb)
-            val_correct += (out.argmax(1) == yb).sum().item()
-            val_total += len(xb)
+            loss.backward()
+            optimizer.step()
+            train_loss += loss.item() * len(xb)
+            train_correct += (out.argmax(1) == yb).sum().item()
+            train_total += len(xb)
 
-    val_loss /= val_total
-    val_acc = val_correct / val_total
+        train_loss /= train_total
+        train_acc = train_correct / train_total
 
-    scheduler.step(val_loss)
-    current_lr = optimizer.param_groups[0]["lr"]
+        # --- Validation ---
+        model.eval()
+        val_loss = 0.0
+        val_correct = 0
+        val_total = 0
+        with torch.no_grad():
+            for xb, yb in val_loader:
+                xb, yb = xb.to(device), yb.to(device)
+                out = model(xb).squeeze(-1).squeeze(-1)
+                loss = criterion(out, yb)
+                val_loss += loss.item() * len(xb)
+                val_correct += (out.argmax(1) == yb).sum().item()
+                val_total += len(xb)
 
-    print(
-        f"Epoch {epoch:4d}/{epochs} - "
-        f"loss: {train_loss:.4f} acc: {train_acc:.4f} - "
-        f"val_loss: {val_loss:.4f} val_acc: {val_acc:.4f} - "
-        f"lr: {current_lr:.2e}"
-    )
+        val_loss /= val_total
+        val_acc = val_correct / val_total
 
-    # --- EarlyStopping with restore_best_weights ---
-    if val_loss < best_val_loss:
-        best_val_loss = val_loss
-        best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
-        epochs_without_improvement = 0
-    else:
-        epochs_without_improvement += 1
-        if epochs_without_improvement >= patience:
-            print(f"\nEarly stopping at epoch {epoch} (no improvement for {patience} epochs)")
-            break
+        scheduler.step(val_loss)
+        current_lr = optimizer.param_groups[0]["lr"]
+
+        print(
+            f"Epoch {epoch:4d}/{epochs} - "
+            f"loss: {train_loss:.4f} acc: {train_acc:.4f} - "
+            f"val_loss: {val_loss:.4f} val_acc: {val_acc:.4f} - "
+            f"lr: {current_lr:.2e}"
+        )
+
+        # --- EarlyStopping with restore_best_weights ---
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+            epochs_without_improvement = 0
+        else:
+            epochs_without_improvement += 1
+            if epochs_without_improvement >= patience:
+                print(f"\nEarly stopping at epoch {epoch} (no improvement for {patience} epochs)")
+                break
+except KeyboardInterrupt:
+    print(f"\n\nInterrupted at epoch {epoch}. Saving best weights...")
 
 # Restore best weights
 if best_state is not None:
@@ -163,7 +168,7 @@ all_preds = []
 with torch.no_grad():
     for xb, yb in val_loader:
         xb = xb.to(device)
-        out = model(xb)
+        out = model(xb).squeeze(-1).squeeze(-1)
         all_preds.append(out.argmax(1).cpu().numpy())
 
 y_pred = np.concatenate(all_preds)
@@ -209,7 +214,7 @@ torch.onnx.export(
     onnx_path,
     input_names=["input"],
     output_names=["output"],
-    dynamic_axes={"input": {0: "batch"}, "output": {0: "batch"}},
+    dynamic_axes={"input": {0: "batch", 2: "height", 3: "width"}, "output": {0: "batch", 2: "height", 3: "width"}},
     opset_version=17,
 )
 print(f"Saved ONNX model: {onnx_path}")
