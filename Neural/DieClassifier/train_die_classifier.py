@@ -13,7 +13,7 @@ from PIL import Image
 dataset_file = "augmented_training.h5"
 input_size = 20  # 180 image size reduced 9x by augmentation script
 num_classes = 7
-batch_size = 4096
+batch_size = 1024*8
 epochs = 2000
 patience = 200
 
@@ -28,9 +28,9 @@ print(f"Using device: {device}")
 # On full downsampled image: produces a 7-channel heatmap in a single pass.
 # Output stride = 9 (downsample) * 4 (two MaxPool2d) = 36 pixels in original image space.
 DiceCNN = nn.Sequential(
-    nn.Conv2d(1, 8, 3, padding=1), nn.ReLU(),                          # -> 8x20x20
-    nn.Conv2d(8, 16, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),        # -> 16x10x10
-    nn.Conv2d(16, 16, 3, padding=1), nn.ReLU(), nn.Dropout2d(0.01),
+    nn.Conv2d(1, 16, 3, padding=1), nn.ReLU(),                          # -> 8x20x20
+    nn.Conv2d(16, 16, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),        # -> 16x10x10
+    #nn.Conv2d(16, 16, 3, padding=1), nn.ReLU(), nn.Dropout2d(0.01),
     nn.Conv2d(16, 32, 3, padding=1), nn.ReLU(), nn.Dropout2d(0.01), nn.MaxPool2d(2),  # -> 32x5x5
     nn.Conv2d(32, 64, 5), nn.ReLU(), nn.Dropout2d(0.05),               # -> 64x1x1 (replaces Flatten+Linear)
     nn.Conv2d(64, num_classes, 1),                                      # -> 7x1x1 (replaces final Linear)
