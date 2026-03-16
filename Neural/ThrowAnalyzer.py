@@ -1,34 +1,18 @@
 import numpy as np
-import onnxruntime as ort
 from PIL import Image
-from scipy.ndimage import gaussian_filter
-from skimage.feature import peak_local_max, corner_subpix
-import os
+from scipy.ndimage import gaussian_filter, label, center_of_mass, sum as ndsum
+from DieClassifier.DieClassifier import classify_image
 
 # === Settings ===
-_model_path = os.path.join(os.path.dirname(__file__), "DieClassifier", "dice_cnn.onnx")
-_input_size = 20
-_crop_size = 180
-_stride = 18  # pixels between each classifier evaluation
-_downsample = 9  # crop_size / input_size
 _gaussian_sigma = 0.5
-_min_distance = 54//_stride  # in heatmap space (~36px in original)
-_threshold = 0.7  # minimum softmax confidence to count
-
-# === Load model once on import ===
-_session = ort.InferenceSession(_model_path)
-_input_name = _session.get_inputs()[0].name
-
-
-def _softmax(logits):
-    """Apply softmax along last axis."""
-    exp = np.exp(logits - np.max(logits, axis=-1, keepdims=True))
-    return exp / exp.sum(axis=-1, keepdims=True)
+_activation_threshold = 0.5  # minimum softmax value to count as activated
+_sum_threshold = 10.0         # minimum summed confidence to keep a detection
+_dedup_distance = 90         # minimum distance between detections in original image pixels
 
 
 def analyze_throw(pil_image):
     """
-    Analyze a full image of dice by sliding the classifier across the image.
+    Analyze a full image of dice using a single-pass fully convolutional classifier.
 
     Args:
         pil_image: PIL Image (RGB) of the full throw
@@ -37,67 +21,35 @@ def analyze_throw(pil_image):
         List of (x, y, face_value, confidence, confidence) tuples.
         face_value is 1-6. Two confidence values for compatibility with ManualDiePicker.
     """
-    gray = np.array(pil_image.convert("L"), dtype=np.float32) / 255.0
-    img_h, img_w = gray.shape
-    half = _crop_size // 2
+    # Single forward pass produces a 7-channel heatmap
+    probs, stride = classify_image(pil_image)  # (H', W', 7)
 
-    # Pad image so we can center crops on any pixel including edges
-    padded = np.pad(gray, half, mode='edge')
-
-    # Extract all patches at stride intervals across the full original image
-    patches = []
-    positions = []  # (x_center, y_center) in original image coords
-    for y in range(0, img_h, _stride):
-        for x in range(0, img_w, _stride):
-            # In padded coords, the center is at (x + half, y + half)
-            patch = padded[y:y + _crop_size, x:x + _crop_size]
-            # Downsample using simple reshaping (crop_size/downsample = input_size)
-            small = patch.reshape(_input_size, _downsample, _input_size, _downsample).mean(axis=(1, 3))
-            patches.append(small)
-            positions.append((x, y))
-
-    if not patches:
-        return []
-
-    # Run classifier on all patches in one batch
-    batch = np.array(patches, dtype=np.float32).reshape(-1, 1, _input_size, _input_size)
-    logits = _session.run(None, {_input_name: batch})[0]  # (N, 7)
-    probs = _softmax(logits)  # (N, 7)
-
-    # Build 6-channel heatmap (one per face value 1-6)
-    grid_h = len(range(0, img_h, _stride))
-    grid_w = len(range(0, img_w, _stride))
-    heatmaps = probs[:, 1:7].reshape(grid_h, grid_w, 6)  # ignore class 0
-
-    # Find peaks in each channel
+    # Find dice in each face channel (1-6, skip class 0)
     results = []
     for face_idx in range(6):
         face_value = face_idx + 1
-        hmap = heatmaps[:, :, face_idx]
+        hmap = probs[:, :, face_value]
 
-        # Smooth to merge nearby responses
+        # Smooth and threshold to find activated regions
         hmap_smooth = gaussian_filter(hmap, sigma=_gaussian_sigma)
+        mask = hmap_smooth >= _activation_threshold
 
-        coords = peak_local_max(
-            hmap_smooth,
-            min_distance=_min_distance,
-            threshold_abs=_threshold,
-        )
-
-        if len(coords) == 0:
+        # Label connected regions
+        labeled, n_regions = label(mask)
+        if n_regions == 0:
             continue
 
-        # Sub-pixel refinement
-        refined = corner_subpix(hmap_smooth, coords, window_size=5)
+        # Get center of mass and summed confidence for each region
+        region_indices = range(1, n_regions + 1)
+        centers = center_of_mass(hmap_smooth, labeled, region_indices)
+        sums = ndsum(hmap_smooth, labeled, region_indices)
 
-        for i, (row, col) in enumerate(coords):
-            confidence = float(hmap_smooth[row, col])
-            sub_row, sub_col = refined[i]
-            if np.isnan(sub_row):
-                sub_row, sub_col = float(row), float(col)
-            # Convert grid coords back to original image coords
-            orig_x = int(round(sub_col * _stride))
-            orig_y = int(round(sub_row * _stride))
+        for region_i, (com_row, com_col) in enumerate(centers):
+            confidence = float(sums[region_i])
+            if confidence < _sum_threshold:
+                continue
+            orig_x = int(round(com_col * stride))
+            orig_y = int(round(com_row * stride))
             results.append((orig_x, orig_y, face_value, confidence, confidence))
 
     # Remove duplicate detections where multiple face channels found the same location
@@ -106,7 +58,7 @@ def analyze_throw(pil_image):
     filtered = []
     for r in results:
         too_close = any(
-            ((r[0] - f[0]) ** 2 + (r[1] - f[1]) ** 2) ** 0.5 < _crop_size // 2
+            ((r[0] - f[0]) ** 2 + (r[1] - f[1]) ** 2) ** 0.5 < _dedup_distance
             for f in filtered
         )
         if not too_close:
@@ -119,7 +71,11 @@ def analyze_throw(pil_image):
 if __name__ == "__main__":
     import sys
 
-    paths = sys.argv[1:] if len(sys.argv) > 1 else ["C:\\Users\\james\\OneDrive\\Documents\\dicebox_git\\images\\final_box_20_dice\\04.jpg"]
+    paths = sys.argv[1:] if len(sys.argv) > 1 else []
+    if not paths:
+        print("Usage: python ThrowAnalyzer.py <image_path> [image_path ...]")
+        sys.exit(1)
+
     for path in paths:
       img = Image.open(path)
 
