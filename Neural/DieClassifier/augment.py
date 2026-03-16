@@ -25,10 +25,10 @@ color_augmentation = transforms.Compose([
     transforms.ColorJitter(brightness=0.15, contrast=0.25),
 ])
 rotation_range = 90  # degrees
-position_jitter = 30  # max pixel offset in each direction
-# Outer crop must be large enough that rotating inner crop + position jitter never hits the edge.
-# For 180x180 inner crop, diagonal is ~255px, plus 30px jitter margin on each side.
-outer_crop_size = int(crop_size * 1.45) + position_jitter * 2
+position_jitter = 15  # max pixel offset in each direction
+scale_jitter = 0.05   # +-5% crop size variation
+# Outer crop must be large enough for rotation + position jitter + scale jitter.
+outer_crop_size = int(crop_size * (1.45 + scale_jitter)) + position_jitter * 2
 
 negatives_per_image = 50
 min_dist = 1.4 * (crop_size // 4)
@@ -117,9 +117,12 @@ def process_image(args):
             center = outer_crop_size // 2
             dx = random.randint(-position_jitter, position_jitter)
             dy = random.randint(-position_jitter, position_jitter)
-            inner_left = center - half + dx
-            inner_top = center - half + dy
-            inner = rotated.crop((inner_left, inner_top, inner_left + crop_size, inner_top + crop_size))
+            scale = 1.0 + random.uniform(-scale_jitter, scale_jitter)
+            scaled_crop = int(crop_size * scale)
+            scaled_half = scaled_crop // 2
+            inner_left = center - scaled_half + dx
+            inner_top = center - scaled_half + dy
+            inner = rotated.crop((inner_left, inner_top, inner_left + scaled_crop, inner_top + scaled_crop))
             inner_small = inner.resize((input_size, input_size))
             augmented_pil = color_augmentation(inner_small)
             augmented_tensor = transforms.functional.to_tensor(augmented_pil)
