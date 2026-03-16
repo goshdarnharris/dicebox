@@ -24,9 +24,10 @@ color_augmentation = transforms.Compose([
     transforms.ColorJitter(brightness=0.15, contrast=0.25),
 ])
 rotation_range = 90  # degrees
-# Outer crop must be large enough that rotating inner crop never hits the edge.
-# For 180x180 inner crop, diagonal is ~255px, so 260x260 outer is sufficient.
-outer_crop_size = int(crop_size * 1.45)
+position_jitter = 18  # max pixel offset in each direction
+# Outer crop must be large enough that rotating inner crop + position jitter never hits the edge.
+# For 180x180 inner crop, diagonal is ~255px, plus 18px jitter margin on each side.
+outer_crop_size = int(crop_size * 1.45) + position_jitter * 2
 
 
 def add_gaussian_noise(tensor, sigma=0.025):
@@ -123,9 +124,12 @@ for rel_path in sorted(all_annotations.keys()):
             # Rotate the larger crop by a random angle
             angle = random.uniform(-rotation_range, rotation_range)
             rotated = outer_crop.rotate(angle, resample=Image.BILINEAR, expand=False)
-            # Crop the inner region (center of rotated image)
-            inner_left = (outer_crop_size - crop_size) // 2
-            inner_top = (outer_crop_size - crop_size) // 2
+            # Crop the inner region with random position offset
+            center = outer_crop_size // 2
+            dx = random.randint(-position_jitter, position_jitter)
+            dy = random.randint(-position_jitter, position_jitter)
+            inner_left = center - half + dx
+            inner_top = center - half + dy
             inner = rotated.crop((inner_left, inner_top, inner_left + crop_size, inner_top + crop_size))
             # Apply color augmentation, downsample, add noise
             inner_small = inner.resize((input_size, input_size))
