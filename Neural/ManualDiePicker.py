@@ -4,6 +4,7 @@ import os
 import json
 import numpy as np
 from ThrowAnalyzer import analyze_throw
+from DieClassifier.DieClassifier import identify_die
 
 # Settings
 image_dir = 'training_images'
@@ -151,9 +152,14 @@ def on_click(event):
         redraw_canvas()
         return
 
-    # New die — show crop box and wait for keypress
+    # New die — crop, run classifier, add with auto-guess
+    half = crop_size // 2
+    box = (x - half, y - half, x + half, y + half)
+    crop = average_border_fill(original_image, box)
+    face, conf = identify_die(crop)
+    annotations.append((x, y, face, None, conf))
     pending_click = (x, y)
-    print(f"Click at ({x}, {y}). Awaiting number key 0-6...")
+    print(f"Click at ({x}, {y}). Auto-ID: {face} ({conf:.2f}). Press 0-6 to override.")
     redraw_canvas()
 
 def on_keypress(event):
@@ -166,8 +172,14 @@ def on_keypress(event):
         return
 
     x, y = pending_click
+    # Remove the auto-guess annotation and replace with manual override
+    for i in range(len(annotations) - 1, -1, -1):
+        ax, ay = annotations[i][0], annotations[i][1]
+        if ax == x and ay == y:
+            annotations.pop(i)
+            break
     annotations.append((x, y, digit, None, None))
-    print(f"Added die at ({x}, {y}) face={digit}")
+    print(f"Override: die at ({x}, {y}) set to face={digit}")
     pending_click = None
     redraw_canvas()
 
@@ -224,7 +236,6 @@ def copy_prev():
 
 def next_image():
     global current_index, pending_click, prev_annotations
-    save_annotations()
     prev_annotations = list(annotations)
     current_index += 1
     if current_index >= len(image_paths):
@@ -237,7 +248,6 @@ def next_image():
 
 def prev_image():
     global current_index, pending_click
-    save_annotations()
     if current_index <= 0:
         print("Already at first image.")
         return
@@ -264,6 +274,8 @@ def move_buttons():
     next_btn_window = canvas.create_window(0, 0, window=next_btn, anchor=tk.NW)
     copy_btn = tk.Button(root, text="Copy Prev", command=copy_prev)
     copy_btn_window = canvas.create_window(0, 0, window=copy_btn, anchor=tk.NW)
+    save_btn = tk.Button(root, text="Save", command=save_annotations, bg="#4a4", fg="white")
+    save_btn_window = canvas.create_window(0, 0, window=save_btn, anchor=tk.NW)
     # Left side buttons
     prev_btn = tk.Button(root, text="◀ Prev", command=prev_image)
     prev_btn_window = canvas.create_window(0, 0, window=prev_btn, anchor=tk.NW)
@@ -276,8 +288,10 @@ def move_buttons():
     # Right side positioning
     next_w = next_btn.winfo_reqwidth()
     copy_w = copy_btn.winfo_reqwidth()
+    save_w = save_btn.winfo_reqwidth()
     canvas.coords(next_btn_window, image_width - next_w - 5, image_height - btn_height - 5)
     canvas.coords(copy_btn_window, image_width - next_w - copy_w - 15, image_height - btn_height - 5)
+    canvas.coords(save_btn_window, image_width - next_w - copy_w - save_w - 25, image_height - btn_height - 5)
     # Left side positioning
     prev_w = prev_btn.winfo_reqwidth()
     clear_w = clear_btn.winfo_reqwidth()

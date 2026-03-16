@@ -1,52 +1,124 @@
 import numpy as np
+import onnxruntime as ort
 from PIL import Image
-from DieFinder.DieFinder import find_dice
-from DieClassifier.DieClassifier import identify_die
+from scipy.ndimage import gaussian_filter
+from skimage.feature import peak_local_max, corner_subpix
+import os
 
 # === Settings ===
-crop_size = 180
+_model_path = os.path.join(os.path.dirname(__file__), "DieClassifier", "dice_cnn.onnx")
+_input_size = 20
+_crop_size = 180
+_stride = 14  # pixels between each classifier evaluation
+_downsample = 9  # crop_size / input_size
+_gaussian_sigma = 0.5
+_min_distance = 4  # in heatmap space (~36px in original)
+_threshold = 0.7  # minimum softmax confidence to count
+
+# === Load model once on import ===
+_session = ort.InferenceSession(_model_path)
+_input_name = _session.get_inputs()[0].name
 
 
-def average_border_fill(image, box):
-    """Crop with padding if box extends past image edges."""
-    avg_color = tuple(np.array(image).reshape(-1, 3).mean(axis=0).astype(np.uint8))
-    padded = Image.new("RGB", (box[2] - box[0], box[3] - box[1]), avg_color)
-    left = max(box[0], 0)
-    upper = max(box[1], 0)
-    right = min(box[2], image.width)
-    lower = min(box[3], image.height)
-    cropped = image.crop((left, upper, right, lower))
-    paste_x = left - box[0]
-    paste_y = upper - box[1]
-    padded.paste(cropped, (paste_x, paste_y))
-    return padded
+def _softmax(logits):
+    """Apply softmax along last axis."""
+    exp = np.exp(logits - np.max(logits, axis=-1, keepdims=True))
+    return exp / exp.sum(axis=-1, keepdims=True)
 
 
-def analyze_throw(pil_image, crop_sz=crop_size):
+def analyze_throw(pil_image):
     """
-    Analyze a full image of dice.
+    Analyze a full image of dice by sliding the classifier across the image.
 
     Args:
         pil_image: PIL Image (RGB) of the full throw
-        crop_sz: size of the crop around each detected die center
 
     Returns:
-        List of (x, y, face_value, die_confidence, id_confidence) tuples.
-        face_value is 1-6 (results with face_value=0 are filtered out).
+        List of (x, y, face_value, confidence, confidence) tuples.
+        face_value is 1-6. Two confidence values for compatibility with ManualDiePicker.
     """
-    image = pil_image.convert("RGB")
-    positions = find_dice(image)
+    gray = np.array(pil_image.convert("L"), dtype=np.float32) / 255.0
+    img_h, img_w = gray.shape
+    half = _crop_size // 2
 
+    # Pad image so we can center crops on any pixel including edges
+    padded = np.pad(gray, half, mode='edge')
+
+    # Extract all patches at stride intervals across the full original image
+    patches = []
+    positions = []  # (x_center, y_center) in original image coords
+    for y in range(0, img_h, _stride):
+        for x in range(0, img_w, _stride):
+            # In padded coords, the center is at (x + half, y + half)
+            patch = padded[y:y + _crop_size, x:x + _crop_size]
+            # Downsample using simple reshaping (crop_size/downsample = input_size)
+            small = patch.reshape(_input_size, _downsample, _input_size, _downsample).mean(axis=(1, 3))
+            patches.append(small)
+            positions.append((x, y))
+
+    if not patches:
+        return []
+
+    # Run classifier on all patches in one batch
+    batch = np.array(patches, dtype=np.float32).reshape(-1, 1, _input_size, _input_size)
+    logits = _session.run(None, {_input_name: batch})[0]  # (N, 7)
+    probs = _softmax(logits)  # (N, 7)
+
+    # DEBUG: show what the classifier sees near y=63
+    for idx, (px, py) in enumerate(positions):
+        if 50 <= py <= 80 and 200 <= px <= 400:
+            best = int(np.argmax(probs[idx]))
+            print(f"  pos=({px},{py}) class={best} probs={probs[idx].round(3)}")
+
+    # Build 6-channel heatmap (one per face value 1-6)
+    grid_h = len(range(0, img_h, _stride))
+    grid_w = len(range(0, img_w, _stride))
+    heatmaps = probs[:, 1:7].reshape(grid_h, grid_w, 6)  # ignore class 0
+
+    # Find peaks in each channel
     results = []
-    half = crop_sz // 2
-    for x, y, die_conf in positions:
-        box = (x - half, y - half, x + half, y + half)
-        crop = average_border_fill(image, box)
-        face, id_conf = identify_die(crop)
-        if face > 0:
-            results.append((x, y, face, die_conf, id_conf))
+    for face_idx in range(6):
+        face_value = face_idx + 1
+        hmap = heatmaps[:, :, face_idx]
 
-    return results
+        # Smooth to merge nearby responses
+        hmap_smooth = gaussian_filter(hmap, sigma=_gaussian_sigma)
+
+        coords = peak_local_max(
+            hmap_smooth,
+            min_distance=_min_distance,
+            threshold_abs=_threshold,
+        )
+
+        if len(coords) == 0:
+            continue
+
+        # Sub-pixel refinement
+        refined = corner_subpix(hmap_smooth, coords, window_size=5)
+
+        for i, (row, col) in enumerate(coords):
+            confidence = float(hmap_smooth[row, col])
+            sub_row, sub_col = refined[i]
+            if np.isnan(sub_row):
+                sub_row, sub_col = float(row), float(col)
+            # Convert grid coords back to original image coords
+            orig_x = int(round(sub_col * _stride))
+            orig_y = int(round(sub_row * _stride))
+            results.append((orig_x, orig_y, face_value, confidence, confidence))
+
+    # Remove duplicate detections where multiple face channels found the same location
+    # Keep the one with highest confidence
+    results.sort(key=lambda r: r[3], reverse=True)
+    filtered = []
+    for r in results:
+        too_close = any(
+            ((r[0] - f[0]) ** 2 + (r[1] - f[1]) ** 2) ** 0.5 < _crop_size // 2
+            for f in filtered
+        )
+        if not too_close:
+            filtered.append(r)
+
+    return filtered
 
 
 # === CLI ===
@@ -62,8 +134,8 @@ if __name__ == "__main__":
 
       print(f"\nFound {len(results)} dice:")
       counts = [0] * 7
-      for x, y, face, die_conf, id_conf in results:
-          print(f"  ({x:4d}, {y:4d})  face={face}  finder={die_conf:.3f}  identifier={id_conf:.3f}")
+      for x, y, face, conf, _ in results:
+          print(f"  ({x:4d}, {y:4d})  face={face}  confidence={conf:.3f}")
           counts[face] += 1
 
       print(f"\nSummary: {sum(counts)} dice")
