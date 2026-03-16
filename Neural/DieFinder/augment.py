@@ -1,9 +1,10 @@
 import os
 import json
 import numpy as np
-import tensorflow as tf
+import torch
 import h5py
 from PIL import Image
+from torchvision.transforms import v2
 from gen_finder_targets import generate_heatmap
 
 # === Settings ===
@@ -15,9 +16,8 @@ downsample = 9  # must match train_die_finder.py
 
 # Photometric augmentation only — no spatial transforms needed
 # because the fully convolutional finder CNN is already spatially invariant.
-augmentation = tf.keras.Sequential([
-    tf.keras.layers.RandomBrightness([-0.25, 0.25], value_range=[0.0, 1.0]),
-    tf.keras.layers.RandomContrast(0.25),
+augmentation = v2.Compose([
+    v2.ColorJitter(brightness=0.25, contrast=0.25),
 ])
 
 # === Load annotations ===
@@ -54,14 +54,17 @@ for rel_path in sorted(all_annotations.keys()):
     all_images.append(src_arr)
     all_targets.append(tgt_arr)
 
-    # Generate augmented copies
-    batch = np.stack([src_arr[:, :, np.newaxis]] * copies_per_image)
-    augmented = augmentation(batch, training=True).numpy()
-    noise = np.random.normal(0, 0.05, augmented.shape).astype(np.float32)
-    augmented = np.clip(augmented + noise, 0, 1)
+    # Generate augmented copies — build a batch as (N, 1, H, W) tensor
+    src_tensor = torch.from_numpy(src_arr).unsqueeze(0)  # (1, H, W)
+    batch = src_tensor.repeat(copies_per_image, 1, 1, 1)  # (N, 1, H, W)
 
+    augmented = augmentation(batch)  # (N, 1, H, W)
+    noise = torch.normal(0, 0.05, size=augmented.shape)
+    augmented = torch.clamp(augmented + noise, 0, 1)
+
+    augmented_np = augmented.numpy()
     for i in range(copies_per_image):
-        all_images.append(augmented[i, :, :, 0])
+        all_images.append(augmented_np[i, 0, :, :])
         all_targets.append(tgt_arr)  # target is the same for all augmented versions
 
 # === Save to HDF5 ===

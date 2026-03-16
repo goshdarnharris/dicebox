@@ -1,17 +1,15 @@
 import numpy as np
-import tensorflow as tf
+import onnxruntime as ort
 from PIL import Image
 import os
 
 # === Settings ===
-_model_path = os.path.join(os.path.dirname(__file__), "dice_cnn.tflite")
+_model_path = os.path.join(os.path.dirname(__file__), "dice_cnn.onnx")
 _input_size = 20
 
 # === Load model once on import ===
-_interpreter = tf.lite.Interpreter(model_path=_model_path)
-_interpreter.allocate_tensors()
-_input_details = _interpreter.get_input_details()
-_output_details = _interpreter.get_output_details()
+_session = ort.InferenceSession(_model_path)
+_input_name = _session.get_inputs()[0].name
 
 
 def identify_die(pil_image, input_size=_input_size):
@@ -27,21 +25,15 @@ def identify_die(pil_image, input_size=_input_size):
         and confidence is the softmax probability.
     """
     gray = pil_image.convert("L").resize((input_size, input_size))
-    input_dtype = _input_details[0]['dtype']
-    if input_dtype == np.uint8:
-        arr = np.array(gray, dtype=np.uint8).reshape(1, input_size, input_size, 1)
-    else:
-        arr = (np.array(gray, dtype=np.float32) / 255.0).reshape(1, input_size, input_size, 1)
-    _interpreter.set_tensor(_input_details[0]['index'], arr)
-    _interpreter.invoke()
-    output = _interpreter.get_tensor(_output_details[0]['index'])[0]
-    # Dequantize if int8 output
-    out_detail = _output_details[0]
-    if output.dtype == np.uint8:
-        scale, zero_point = out_detail['quantization']
-        output = (output.astype(np.float32) - zero_point) * scale
-    face_value = int(np.argmax(output))
-    confidence = float(output[face_value])
+    # ONNX model expects (N, C, H, W) float32
+    arr = np.array(gray, dtype=np.float32) / 255.0
+    arr = arr.reshape(1, 1, input_size, input_size)
+    output = _session.run(None, {_input_name: arr})[0][0]  # raw logits
+    # Apply softmax
+    exp = np.exp(output - np.max(output))
+    probs = exp / exp.sum()
+    face_value = int(np.argmax(probs))
+    confidence = float(probs[face_value])
     return face_value, confidence
 
 

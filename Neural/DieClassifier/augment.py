@@ -2,9 +2,10 @@ import os
 import json
 import random
 import numpy as np
-import tensorflow as tf
+import torch
 import h5py
 from PIL import Image
+from torchvision import transforms
 
 # === Settings ===
 image_dir = '../training_images'
@@ -17,11 +18,19 @@ input_size = crop_size // downsample
 copies_per_image = 10
 
 # === Augmentation ===
-augmentation = tf.keras.Sequential([
-    tf.keras.layers.RandomRotation(0.3, fill_mode="nearest"),
-    tf.keras.layers.RandomBrightness([-0.25, 0.25], value_range=[0.0, 1.0]),
-    tf.keras.layers.RandomContrast(0.25),
+# RandomRotation: 0.3 turns = 108 degrees
+# RandomBrightness [-0.25, 0.25] maps to ColorJitter brightness=(0.75, 1.25)
+# RandomContrast 0.25 maps to ColorJitter contrast=(0.75, 1.25)
+augmentation = transforms.Compose([
+    transforms.RandomRotation(108, interpolation=transforms.InterpolationMode.NEAREST, fill=0),
+    transforms.ColorJitter(brightness=0.25, contrast=0.25),
 ])
+
+
+def add_gaussian_noise(tensor, sigma=0.025):
+    """Add Gaussian noise to a tensor and clamp to [0, 1]."""
+    noise = torch.randn_like(tensor) * sigma
+    return torch.clamp(tensor + noise, 0.0, 1.0)
 
 
 def average_border_fill(image, box):
@@ -101,12 +110,13 @@ for rel_path in sorted(all_annotations.keys()):
         all_labels.append(face)
 
         # Generate augmented copies
-        batch = np.stack([arr[:, :, np.newaxis]] * copies_per_image)
-        augmented = augmentation(batch, training=True).numpy()
-        noise = np.random.normal(0, 0.025, augmented.shape).astype(np.float32)
-        augmented = np.clip(augmented + noise, 0, 1)
+        # Convert grayscale array to PIL Image for torchvision transforms
+        pil_gray = Image.fromarray((arr * 255).astype(np.uint8), mode="L")
         for i in range(copies_per_image):
-            all_images.append(augmented[i, :, :, 0])
+            augmented_pil = augmentation(pil_gray)
+            augmented_tensor = transforms.functional.to_tensor(augmented_pil)  # (1, H, W) float32 [0,1]
+            augmented_tensor = add_gaussian_noise(augmented_tensor, sigma=0.025)
+            all_images.append(augmented_tensor.squeeze(0).numpy())
             all_labels.append(face)
 
 # === Save to HDF5 ===
