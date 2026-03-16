@@ -5,7 +5,7 @@ import sys
 
 # === Settings ===
 dataset_file = sys.argv[1] if len(sys.argv) > 1 else "augmented_training.h5"
-scale = 8  # upscale tiny 20x20 images for display
+scale = 16  # upscale tiny 20x20 images for display
 
 hf = h5py.File(dataset_file, "r")
 images = hf["images"]
