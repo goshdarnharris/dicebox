@@ -1,4 +1,5 @@
 import numpy as np
+import time
 from PIL import Image
 from scipy.ndimage import gaussian_filter, label, center_of_mass, sum as ndsum
 from DieClassifier.DieClassifier import classify_image
@@ -21,8 +22,10 @@ def analyze_throw(pil_image):
         List of (x, y, face_value, confidence, confidence) tuples.
         face_value is 1-6. Two confidence values for compatibility with ManualDiePicker.
     """
+    t0 = time.perf_counter()
     # Single forward pass produces a 7-channel heatmap
     probs, stride = classify_image(pil_image)  # (H', W', 7)
+    t1 = time.perf_counter()
 
     # Find dice in each face channel (1-6, skip class 0)
     results = []
@@ -64,6 +67,8 @@ def analyze_throw(pil_image):
         if not too_close:
             filtered.append(r)
 
+    t2 = time.perf_counter()
+    print(f"ThrowAnalyzer: CNN {(t1-t0)*1000:.0f}ms, post-process {(t2-t1)*1000:.0f}ms, total {(t2-t0)*1000:.0f}ms")
     return filtered
 
 
