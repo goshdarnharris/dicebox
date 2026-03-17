@@ -4,7 +4,7 @@ from PIL import Image
 import os
 
 # === Settings ===
-_model_path = os.path.join(os.path.dirname(__file__), "dice_cnn.onnx")
+_model_path = os.path.join(os.path.dirname(__file__), "dice_cnn_int8.onnx")
 _input_size = 20
 
 # === Load model once on import ===

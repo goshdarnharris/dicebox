@@ -13,7 +13,7 @@ from PIL import Image
 dataset_file = "augmented_training.h5"
 input_size = 20  # 180 image size reduced 9x by augmentation script
 num_classes = 7
-batch_size = 1024*8
+batch_size = 1024*2
 epochs = 10000
 patience = 500
 
@@ -28,11 +28,10 @@ print(f"Using device: {device}")
 # On full downsampled image: produces a 7-channel heatmap in a single pass.
 # Output stride = 9 (downsample) * 4 (two MaxPool2d) = 36 pixels in original image space.
 DiceCNN = nn.Sequential(
-    nn.Conv2d(1, 8, 3, padding=1), nn.ReLU(),                          # -> 8x20x20
-    nn.Conv2d(8, 16, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),        # -> 16x10x10
-    #nn.Conv2d(16, 32, 3, padding=1), nn.ReLU(), nn.Dropout2d(0.01),
-    nn.Conv2d(16, 32, 3, padding=1), nn.ReLU(), nn.Dropout2d(0.05), nn.MaxPool2d(2),  # -> 32x5x5
-    nn.Conv2d(32, 64, 5), nn.ReLU(), nn.Dropout2d(0.05),               # -> 64x1x1 (replaces Flatten+Linear)
+    nn.Conv2d(1, 8, 3), nn.ReLU(),                          # -> 8x18x18
+    nn.Conv2d(8, 16, 3), nn.ReLU(), nn.MaxPool2d(2),        # -> 16x16x16 -> MaxPool 16x8x8
+    nn.Conv2d(16, 32, 3), nn.ReLU(), nn.Dropout2d(0.05), nn.MaxPool2d(2),  # -> 32x6x6 -> MaxPool 32x3x3
+    nn.Conv2d(32, 64, 3), nn.ReLU(), nn.Dropout2d(0.05),               # -> 64x1x1 (replaces Flatten+Linear)
     nn.Conv2d(64, num_classes, 1),                                      # -> 7x1x1 (replaces final Linear)
 )
 
@@ -219,25 +218,8 @@ torch.onnx.export(
 )
 print(f"Saved ONNX model: {onnx_path}")
 
-# === TFLite Conversion ===
-# To convert the ONNX model to int8 quantized TFLite, use onnx2tf:
-#
-#   pip install onnx2tf
-#   onnx2tf -i dice_cnn.onnx -oiqt -qt per-tensor
-#
-# This will produce a saved_model directory with a TFLite file inside.
-# For full int8 quantization with a representative dataset, you can also use:
-#
-#   import tensorflow as tf
-#   converter = tf.lite.TFLiteConverter.from_saved_model("saved_model")
-#   converter.optimizations = [tf.lite.Optimize.DEFAULT]
-#   def representative_data():
-#       for i in range(min(200, len(X_train))):
-#           yield [X_train[i:i+1][np.newaxis]]  # (1, 1, 20, 20) float32
-#   converter.representative_dataset = representative_data
-#   converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
-#   converter.inference_input_type = tf.uint8
-#   converter.inference_output_type = tf.uint8
-#   tflite_model = converter.convert()
-#   with open("dice_cnn.tflite", "wb") as f:
-#       f.write(tflite_model)
+# === Export int8 quantized ONNX ===
+from onnxruntime.quantization import quantize_dynamic, QuantType
+int8_path = "dice_cnn_int8.onnx"
+quantize_dynamic(onnx_path, int8_path, weight_type=QuantType.QUInt8)
+print(f"Saved int8 ONNX model: {int8_path}")
