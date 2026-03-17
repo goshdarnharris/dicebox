@@ -16,7 +16,7 @@ output_file = "augmented_training.h5"
 crop_size = 180
 downsample = 9
 input_size = crop_size // downsample
-copies_per_image = 10
+copies_per_image = 40
 
 # === Augmentation ===
 # Rotation is handled separately on a larger crop to avoid black corners.
@@ -25,13 +25,13 @@ color_augmentation = transforms.Compose([
     transforms.ColorJitter(brightness=0.15, contrast=0.25),
 ])
 rotation_range = 90  # degrees
-position_jitter = 14  # max pixel offset in each direction
+position_jitter = 20  # max pixel offset in each direction
 scale_jitter = 0.05   # +-5% crop size variation
 # Outer crop must be large enough for rotation + position jitter + scale jitter.
 outer_crop_size = int(crop_size * (1.45 + scale_jitter)) + position_jitter * 2
 
 negatives_per_image = 30
-min_dist = 1.5 * (crop_size // 4)
+min_dist = 1.2 * position_jitter
 
 
 def add_gaussian_noise(tensor, sigma=0.025):
@@ -97,19 +97,22 @@ def process_image(args):
         raw_name = f"{face}_{safe_base}_{x}_{y}.png"
         crop.save(os.path.join(raw_dir, raw_name))
 
-        # Downsample to training input size, convert to grayscale
-        crop_small = crop.convert("L").resize((input_size, input_size))
-        arr = np.array(crop_small, dtype=np.float32) / 255.0
+        # For augmented copies, crop a larger region so rotation uses real image data
+        outer_box = (x - outer_half, y - outer_half, x + outer_half, y + outer_half)
+        outer_crop = average_border_fill(src, outer_box).convert("L")
 
-        # Add original (unaugmented)
+        # Downsample the outer crop first, then crop inner 20x20.
+        # This matches how classify_image works: global downsample then conv kernel "crops".
+        outer_small_size = outer_crop_size // downsample
+        inner_offset = (outer_small_size - input_size) // 2
+
+        # Add original (unaugmented) — downsample outer, crop inner
+        outer_small = outer_crop.resize((outer_small_size, outer_small_size))
+        arr = np.array(outer_small, dtype=np.float32)[inner_offset:inner_offset+input_size, inner_offset:inner_offset+input_size] / 255.0
         source = f"{rel_path}:{x},{y}"
         images.append(arr)
         labels.append(face)
         sources.append(source)
-
-        # For augmented copies, crop a larger region so rotation uses real image data
-        outer_box = (x - outer_half, y - outer_half, x + outer_half, y + outer_half)
-        outer_crop = average_border_fill(src, outer_box).convert("L")
 
         for i in range(copies_per_image):
             angle = random.uniform(-rotation_range, rotation_range)
@@ -118,13 +121,16 @@ def process_image(args):
             dx = random.randint(-position_jitter, position_jitter)
             dy = random.randint(-position_jitter, position_jitter)
             scale = 1.0 + random.uniform(-scale_jitter, scale_jitter)
-            scaled_crop = int(crop_size * scale)
-            scaled_half = scaled_crop // 2
-            inner_left = center - scaled_half + dx
-            inner_top = center - scaled_half + dy
-            inner = rotated.crop((inner_left, inner_top, inner_left + scaled_crop, inner_top + scaled_crop))
-            inner_small = inner.resize((input_size, input_size))
-            augmented_pil = color_augmentation(inner_small)
+            scaled_crop = int(outer_crop_size * scale)
+            # Crop the transformed outer region
+            crop_left = center - scaled_crop // 2 + dx
+            crop_top = center - scaled_crop // 2 + dy
+            transformed = rotated.crop((crop_left, crop_top, crop_left + scaled_crop, crop_top + scaled_crop))
+            # Downsample the whole transformed region, then crop inner 20x20
+            transformed_small = transformed.resize((outer_small_size, outer_small_size))
+            inner_arr = np.array(transformed_small, dtype=np.float32)[inner_offset:inner_offset+input_size, inner_offset:inner_offset+input_size] / 255.0
+            augmented_pil = Image.fromarray((inner_arr * 255).astype(np.uint8), mode="L")
+            augmented_pil = color_augmentation(augmented_pil)
             augmented_tensor = transforms.functional.to_tensor(augmented_pil)
             augmented_tensor = add_gaussian_noise(augmented_tensor, sigma=0.01)
             images.append(augmented_tensor.squeeze(0).numpy())

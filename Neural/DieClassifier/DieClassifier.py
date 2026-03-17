@@ -36,7 +36,7 @@ def identify_die(pil_image, input_size=_input_size):
     probs = exp / exp.sum()
     face_value = int(np.argmax(probs))
     confidence = float(probs[face_value])
-    return face_value, confidence
+    return face_value, confidence, probs
 
 
 def _softmax_axis0(logits):
@@ -65,55 +65,74 @@ def classify_image(pil_image, downsample=9):
     orig_w, orig_h = gray.size
     small_w, small_h = orig_w // downsample, orig_h // downsample
 
-    # Pad so the model can produce output for edge positions.
-    # Pad by 10 (half of 20px receptive field) so output covers the full image.
-    pad = 10
     small = gray.resize((small_w, small_h))
     arr = np.array(small, dtype=np.float32) / 255.0
+
+    # Pad so the model can produce output covering the full image.
+    # The model needs 20 input pixels to produce 1 output pixel.
+    # With 2 MaxPool(2), each output pixel spans 4 input pixels.
+    # To center the first output on the image edge, pad by half the receptive field.
+    pad = _input_size // 2  # = 10
     arr = np.pad(arr, pad, mode='edge')
 
-    # Native model stride in downsampled space is 4 (two MaxPool2d(2)).
-    # We want stride 1 in downsampled space (= 9px in original space).
-    # Run 4x4=16 shifted passes and interleave results.
     pool_stride = 4  # 2^(num_maxpools)
-    padded_h, padded_w = arr.shape
 
-    # Calculate output size for the full-resolution heatmap
-    out_h = (padded_h - 20) // 1 + 1  # every pixel position in downsampled space
-    out_w = (padded_w - 20) // 1 + 1
-    full_logits = np.zeros((7, out_h, out_w), dtype=np.float32)
+    # The output grid covers all positions in the downsampled image at stride 1.
+    # Each position (r, c) in the grid corresponds to a classifier centered at
+    # downsampled pixel (r, c), i.e., original pixel (r * downsample, c * downsample).
+    out_h = small_h
+    out_w = small_w
+    full_logits = np.full((7, out_h, out_w), -1e9, dtype=np.float32)  # fill with large negative (softmax → ~0)
 
     for dy in range(pool_stride):
         for dx in range(pool_stride):
-            # Crop the padded image with this offset
+            # Crop starting at offset (dy, dx) in the padded image.
+            # Trim so dimensions are compatible with the model (need 20 + n*4 pixels).
             cropped = arr[dy:, dx:]
-            # Trim to make dimensions compatible with the model (divisible by pool_stride)
             crop_h = (cropped.shape[0] // pool_stride) * pool_stride
             crop_w = (cropped.shape[1] // pool_stride) * pool_stride
             cropped = cropped[:crop_h, :crop_w]
 
-            inp = cropped.reshape(1, 1, crop_h, crop_w).astype(np.float32)
-            output = _session.run(None, {_input_name: inp})[0][0]  # (7, H', W')
+            if crop_h < _input_size or crop_w < _input_size:
+                continue
 
-            # Place results into the full-resolution grid
-            # This output's positions in the full grid are at dy, dy+4, dy+8, ...
+            inp = cropped.reshape(1, 1, crop_h, crop_w).astype(np.float32)
+            output = _session.run(None, {_input_name: inp})[0][0]  # (7, oh, ow)
             oh, ow = output.shape[1], output.shape[2]
+
+            # The model's first output pixel corresponds to the receptive field
+            # starting at the beginning of `cropped`. In the padded image, that's
+            # position (dy, dx). The center of that receptive field in the padded
+            # image is at (dy + pad, dx + pad) with pool stride 4.
+            # But we padded by `pad`, so in the original downsampled image, the
+            # center is at (dy + pad - pad, dx + pad - pad) = (dy, dx).
+            # Wait -- the receptive field center for output pixel 0 is at
+            # input pixel (pad-1) in the cropped array (center of the 20-pixel window).
+            # In the padded array, that's (dy + pad - 1). Subtracting the pad we added,
+            # in the original downsampled image that's (dy - 1).
+            #
+            # Actually let's think more carefully:
+            # - The model sees a 20-pixel window and produces 1 output.
+            # - With MaxPool stride 4, output[r] corresponds to input pixels [r*4, r*4+20).
+            # - The center of that window is at input pixel r*4 + 10 - 1 = r*4 + 9.
+            # - In the padded array, that's dy + r*4 + 9.
+            # - In the original array (before padding), that's dy + r*4 + 9 - pad = dy + r*4 - 1.
+            #
+            # Hmm, off-by-one is tricky. Let's use: center = r*4 + 9 for a 20-wide window.
+            # In original coords: orig_r = dy + r*4 + 9 - pad = dy + r*4 - 1
+
             for r in range(oh):
                 for c in range(ow):
-                    full_r = dy + r * pool_stride
-                    full_c = dx + c * pool_stride
-                    if full_r < out_h and full_c < out_w:
-                        full_logits[:, full_r, full_c] = output[:, r, c]
+                    orig_r = dy + r * pool_stride
+                    orig_c = dx + c * pool_stride
+                    if 0 <= orig_r < out_h and 0 <= orig_c < out_w:
+                        full_logits[:, orig_r, orig_c] = output[:, r, c]
 
     # Apply softmax across class dimension
     probs = _softmax_axis0(full_logits)  # (7, H, W)
+    probs = probs.transpose(1, 2, 0)    # (H, W, 7)
 
-    # Transpose to (H, W, 7)
-    probs = probs.transpose(1, 2, 0)
-
-    # Effective stride is now 1 in downsampled space = 9 in original space
     stride = downsample
-
     return probs, stride
 
 
