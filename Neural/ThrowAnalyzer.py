@@ -5,8 +5,8 @@ from DieClassifier.DieClassifier import classify_image
 
 # === Settings ===
 _gaussian_sigma = 0.5
-_activation_threshold = 0.5  # minimum softmax value to count as activated
-_sum_threshold = 10.0         # minimum summed confidence to keep a detection
+_activation_threshold = 0.7  # minimum softmax value to count as activated
+_sum_threshold = 20.0         # minimum summed confidence to keep a detection
 _dedup_distance = 90         # minimum distance between detections in original image pixels
 
 
