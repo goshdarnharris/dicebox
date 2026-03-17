@@ -37,6 +37,7 @@ pending_click = None   # (x, y) or None
 cached_heatmap = None  # (H', W', 7) from classify_image, or None
 active_heatmap = None  # face index (1-6) to overlay, or None
 tk_overlay = None      # keep reference to prevent GC
+last_ambiguities = []  # list of (x, y) from ThrowAnalyzer
 
 # Start on the first un-annotated image
 for i, p in enumerate(image_paths):
@@ -77,17 +78,20 @@ def find_nearest_annotation(x, y):
 def run_auto_detect():
     """Run ThrowAnalyzer and populate annotations."""
     print("Running ThrowAnalyzer...")
-    results = analyze_throw(original_image)
+    global last_ambiguities
+    results, ambiguities = analyze_throw(original_image)
     for x, y, face, conf, _ in results:
         annotations.append((x, y, face, conf))
-    print(f"Auto-detected {len(results)} dice.")
+    last_ambiguities = ambiguities
+    print(f"Auto-detected {len(results)} dice, {len(ambiguities)} ambiguous.")
 
 
-def set_annotations(new_annotations):
+def set_annotations(new_annotations, new_ambiguities=None):
     """Replace annotations and reset pending state."""
-    global pending_click
+    global pending_click, last_ambiguities
     annotations.clear()
     annotations.extend(new_annotations)
+    last_ambiguities = new_ambiguities or []
     pending_click = None
     redraw_canvas()
 
@@ -129,6 +133,12 @@ def redraw_canvas():
         overlay[:, :, 3] = hmap_up  # alpha
         tk_overlay = ImageTk.PhotoImage(Image.fromarray(overlay, "RGBA"))
         canvas.create_image(0, 0, anchor=tk.NW, image=tk_overlay)
+    # Draw ambiguity markers (scaled by blob area)
+    for ax, ay, area in last_ambiguities:
+        ar = max(10, min(40, int(area ** 0.5 * 3)))
+        font_sz = max(12, min(36, int(area ** 0.5 * 2.5)))
+        canvas.create_oval(ax - ar, ay - ar, ax + ar, ay + ar, outline="yellow", width=2)
+        canvas.create_text(ax, ay, text="?", fill="yellow", font=("Arial", font_sz, "bold"))
     half = crop_size // 2
     for x, y, face, conf in annotations:
         color = "green" if face > 0 else "orange"
@@ -149,10 +159,11 @@ def redraw_canvas():
 
 
 def load_image(index):
-    global original_image, tk_image, image_width, image_height, cached_heatmap, active_heatmap
+    global original_image, tk_image, image_width, image_height, cached_heatmap, active_heatmap, last_ambiguities
     annotations.clear()
     cached_heatmap = None
     active_heatmap = None
+    last_ambiguities = []
 
     original_image = Image.open(image_paths[index]).convert("RGB")
     image_width, image_height = original_image.size
