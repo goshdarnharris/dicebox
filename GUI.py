@@ -8,9 +8,10 @@ from typing import List
 import ImageSource
 import sys
 sys.path.insert(0, 'Neural')
-from ThrowAnalyzer import analyze_throw
+from ThrowAnalyzer import analyze_throw, ambiguity_icon_size
 
 import threading
+import math
 
 # Opposite face mapping: bottom 1 = top 6, bottom 2 = top 5, etc.
 OPPOSITE_FACE = {1: 6, 2: 5, 3: 4, 4: 3, 5: 2, 6: 1}
@@ -58,8 +59,6 @@ def drawText(text, xcenter, ycenter, size:int = 14, anchor='center'):
     return (text_id, shadow_id)
 
 splash_img = PIL.ImageTk.PhotoImage(PIL.Image.open("splash.png").resize((display_w,display_h)))
-
-import math
 
 gui_label_y = 25
 gui_count_y = 70
@@ -202,9 +201,7 @@ def prepare_display(img, results, ambiguities, pivot):
     for ax, ay, area in ambiguities:
         dx = display_w - int(ax * scale_x)
         dy = display_h - int(ay * scale_y)
-        # Scale icon size with blob area: sqrt(area) * 3, clamped to reasonable range
-        ar = max(10, min(40, int(area ** 0.5 * 3)))
-        font_sz = max(12, min(36, int(area ** 0.5 * 2.5)))
+        ar, font_sz = ambiguity_icon_size(area)
         draw.ellipse((dx - ar, dy - ar, dx + ar, dy + ar),
                      fill=(80, 80, 80, 150), outline="yellow", width=2)
         draw.text((dx, dy), "?", fill="yellow", anchor="mm",

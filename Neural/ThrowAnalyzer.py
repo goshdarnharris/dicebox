@@ -16,6 +16,13 @@ _ambiguity_fill_radius = 2   # radius in heatmap pixels to fill around detected 
 _ambiguity_min_size = 5
 
 
+def ambiguity_icon_size(area):
+    """Return (radius, font_size) for an ambiguity marker given its blob area."""
+    r = max(10, min(40, int(area ** 0.5 * 3)))
+    f = max(12, min(36, int(area ** 0.5 * 2.5)))
+    return r, f
+
+
 def analyze_throw(pil_image):
     """
     Analyze a full image of dice using a single-pass fully convolutional classifier.

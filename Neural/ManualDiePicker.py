@@ -3,7 +3,7 @@ from PIL import Image, ImageTk
 import os
 import json
 import numpy as np
-from ThrowAnalyzer import analyze_throw
+from ThrowAnalyzer import analyze_throw, ambiguity_icon_size
 from DieClassifier.DieClassifier import identify_die
 
 # === Settings ===
@@ -135,8 +135,7 @@ def redraw_canvas():
         canvas.create_image(0, 0, anchor=tk.NW, image=tk_overlay)
     # Draw ambiguity markers (scaled by blob area)
     for ax, ay, area in last_ambiguities:
-        ar = max(10, min(40, int(area ** 0.5 * 3)))
-        font_sz = max(12, min(36, int(area ** 0.5 * 2.5)))
+        ar, font_sz = ambiguity_icon_size(area)
         canvas.create_oval(ax - ar, ay - ar, ax + ar, ay + ar, outline="yellow", width=2)
         canvas.create_text(ax, ay, text="?", fill="yellow", font=("Arial", font_sz, "bold"))
     half = crop_size // 2
@@ -266,7 +265,6 @@ def rerun_auto():
     run_auto_detect()
     redraw_canvas()
 
-
 def toggle_heatmap(face):
     """Toggle heatmap overlay for a specific face value (1-6)."""
     global cached_heatmap, active_heatmap
@@ -281,9 +279,6 @@ def toggle_heatmap(face):
         print("Done.")
     active_heatmap = face
     redraw_canvas()
-
-
-
 
 def copy_prev():
     if not prev_annotations:
