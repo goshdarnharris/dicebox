@@ -34,6 +34,9 @@ image_height = 0
 annotations = []       # list of (x, y, face, conf)
 prev_annotations = []  # for "copy prev" feature
 pending_click = None   # (x, y) or None
+cached_heatmap = None  # (H', W', 7) from classify_image, or None
+active_heatmap = None  # face index (1-6) to overlay, or None
+tk_overlay = None      # keep reference to prevent GC
 
 # Start on the first un-annotated image
 for i, p in enumerate(image_paths):
@@ -110,8 +113,22 @@ def navigate(delta):
 # === Core functions ===
 
 def redraw_canvas():
+    global tk_overlay
     canvas.delete("all")
     canvas.create_image(0, 0, anchor=tk.NW, image=tk_image)
+    # Draw heatmap overlay if active
+    if active_heatmap is not None and cached_heatmap is not None:
+        probs = cached_heatmap
+        stride = 9  # downsample factor
+        hmap = probs[:, :, active_heatmap]
+        hmap_up = np.array(Image.fromarray((hmap * 255).astype(np.uint8), mode="L")
+                           .resize((image_width, image_height), Image.NEAREST))
+        # Create RGBA overlay: red channel = heatmap, alpha = heatmap intensity
+        overlay = np.zeros((image_height, image_width, 4), dtype=np.uint8)
+        overlay[:, :, 0] = hmap_up  # red
+        overlay[:, :, 3] = hmap_up  # alpha
+        tk_overlay = ImageTk.PhotoImage(Image.fromarray(overlay, "RGBA"))
+        canvas.create_image(0, 0, anchor=tk.NW, image=tk_overlay)
     half = crop_size // 2
     for x, y, face, conf in annotations:
         color = "green" if face > 0 else "orange"
@@ -132,8 +149,10 @@ def redraw_canvas():
 
 
 def load_image(index):
-    global original_image, tk_image, image_width, image_height
+    global original_image, tk_image, image_width, image_height, cached_heatmap, active_heatmap
     annotations.clear()
+    cached_heatmap = None
+    active_heatmap = None
 
     original_image = Image.open(image_paths[index]).convert("RGB")
     image_width, image_height = original_image.size
@@ -169,7 +188,18 @@ def on_click(event):
     half = crop_size // 2
     box = (x - half, y - half, x + half, y + half)
     crop = average_border_fill(original_image, box)
-    face, conf = identify_die(crop)
+    face, conf, all_probs = identify_die(crop)
+
+    # Show full probability breakdown in status bar
+    probs_str = " ".join(f"{i}:{all_probs[i]:.2f}" for i in range(7))
+    hmap_str = ""
+    if cached_heatmap is not None:
+        hx, hy = x // 9, y // 9
+        if 0 <= hy < cached_heatmap.shape[0] and 0 <= hx < cached_heatmap.shape[1]:
+            hp = cached_heatmap[hy, hx]
+            hmap_str = "  |  hmap: " + " ".join(f"{i}:{hp[i]:.2f}" for i in range(7))
+    mouse_label.config(text=f"click: {probs_str}{hmap_str}")
+
     annotations.append((x, y, face, conf))
     pending_click = (x, y)
     print(f"Click at ({x}, {y}). Auto-ID: {face} ({conf:.2f}). Press 0-6 to override.")
@@ -226,6 +256,24 @@ def rerun_auto():
     redraw_canvas()
 
 
+def toggle_heatmap(face):
+    """Toggle heatmap overlay for a specific face value (1-6)."""
+    global cached_heatmap, active_heatmap
+    if active_heatmap == face:
+        active_heatmap = None
+        redraw_canvas()
+        return
+    if cached_heatmap is None:
+        from DieClassifier.DieClassifier import classify_image
+        print("Computing heatmap...")
+        cached_heatmap, _ = classify_image(original_image)
+        print("Done.")
+    active_heatmap = face
+    redraw_canvas()
+
+
+
+
 def copy_prev():
     if not prev_annotations:
         print("No previous annotations to copy.")
@@ -241,7 +289,14 @@ root.title("Dice Annotation Tool")
 canvas = tk.Canvas(root)
 canvas.pack()
 
+mouse_label = tk.Label(root, text="(0, 0)", anchor="w", font=("Arial", 10))
+mouse_label.pack(fill="x")
+
+def on_mouse_move(event):
+    mouse_label.config(text=f"({event.x}, {event.y})")
+
 canvas.bind("<Button-1>", on_click)
+canvas.bind("<Motion>", on_mouse_move)
 root.bind("<Key>", on_keypress)
 root.bind("<BackSpace>", on_undo)
 
@@ -252,7 +307,7 @@ def create_buttons():
         ("◀ Prev", lambda: navigate(-1)),
         ("Clear", lambda: set_annotations([])),
         ("Re-Auto", rerun_auto),
-    ]
+    ] + [(str(i), lambda f=i: toggle_heatmap(f)) for i in range(0, 7)]
     buttons_right = [
         ("Save", save_annotations, {"bg": "#4a4", "fg": "white"}),
         ("Copy Prev", copy_prev),
