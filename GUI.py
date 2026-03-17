@@ -148,8 +148,8 @@ def refreshCanvas():
         writeTextConfig(pivot_left_count, str(low_sum))
         writeTextConfig(pivot_right_count, str(high_sum))
         writeTextConfig(total_text, f"n={n_dice}")
-        # Stddev from expected: probability of being above pivot is (6-p)/6
-        if n_dice > 0:
+        # Stddev from expected (only meaningful with enough dice)
+        if n_dice >= 3:
             prob_high = (6 - p) / 6.0
             expected = n_dice * prob_high
             std = math.sqrt(n_dice * prob_high * (1 - prob_high))
@@ -158,7 +158,7 @@ def refreshCanvas():
                 writeTextConfig(stddev_text, f"{'▲' if z >= 0 else '▼'} {abs(z):.1f}σ")
                 # Dynamic color: green for positive, red for negative, white for neutral
                 # Saturates at +-3 sigma
-                t = max(-1.0, min(1.0, z / 3.0))  # -1 to 1
+                t = max(-1.0, min(1.0, z / 3.0))
                 if t >= 0:
                     r, g, b = int(255 * (1 - t)), 255, int(255 * (1 - t))
                 else:
