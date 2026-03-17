@@ -25,13 +25,13 @@ color_augmentation = transforms.Compose([
     transforms.ColorJitter(brightness=0.15, contrast=0.25),
 ])
 rotation_range = 90  # degrees
-position_jitter = 15  # max pixel offset in each direction
+position_jitter = 14  # max pixel offset in each direction
 scale_jitter = 0.05   # +-5% crop size variation
 # Outer crop must be large enough for rotation + position jitter + scale jitter.
 outer_crop_size = int(crop_size * (1.45 + scale_jitter)) + position_jitter * 2
 
-negatives_per_image = 50
-min_dist = 1.4 * (crop_size // 4)
+negatives_per_image = 30
+min_dist = 1.5 * (crop_size // 4)
 
 
 def add_gaussian_noise(tensor, sigma=0.025):
@@ -126,7 +126,7 @@ def process_image(args):
             inner_small = inner.resize((input_size, input_size))
             augmented_pil = color_augmentation(inner_small)
             augmented_tensor = transforms.functional.to_tensor(augmented_pil)
-            augmented_tensor = add_gaussian_noise(augmented_tensor, sigma=0.025)
+            augmented_tensor = add_gaussian_noise(augmented_tensor, sigma=0.01)
             images.append(augmented_tensor.squeeze(0).numpy())
             labels.append(face)
             sources.append(source)
