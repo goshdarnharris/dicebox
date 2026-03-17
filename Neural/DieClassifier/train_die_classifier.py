@@ -31,8 +31,8 @@ DiceCNN = nn.Sequential(
     nn.Conv2d(1, 8, 3), nn.ReLU(),                          # -> 8x18x18
     nn.Conv2d(8, 16, 3), nn.ReLU(), nn.MaxPool2d(2),        # -> 16x16x16 -> MaxPool 16x8x8
     nn.Conv2d(16, 32, 3), nn.ReLU(), nn.Dropout2d(0.05), nn.MaxPool2d(2),  # -> 32x6x6 -> MaxPool 32x3x3
-    nn.Conv2d(32, 64, 3), nn.ReLU(), nn.Dropout2d(0.05),               # -> 64x1x1 (replaces Flatten+Linear)
-    nn.Conv2d(64, num_classes, 1),                                      # -> 7x1x1 (replaces final Linear)
+    nn.Conv2d(32, 32, 3), nn.ReLU(), nn.Dropout2d(0.05),               # -> 64x1x1 (replaces Flatten+Linear)
+    nn.Conv2d(32, num_classes, 1),                                      # -> 7x1x1 (replaces final Linear)
 )
 
 
