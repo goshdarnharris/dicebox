@@ -152,13 +152,24 @@ def workerThread():
     # Continuously capture and recognize dice.
     while True:
         img = ImageSource.getImage()
-        # Update the display image
+        # Prepare display image
         disp_img = cv2.resize(img, (display_w, display_h))
         disp_img = cv2.cvtColor(disp_img, cv2.COLOR_BGR2RGB)
         pil_img = PIL.Image.fromarray(disp_img)
-        gui_state.bg_img = PIL.ImageTk.PhotoImage(image=pil_img)
+        new_bg = PIL.ImageTk.PhotoImage(image=pil_img)
         # Run detection
-        detectionTask(img)
+        pil_full = PIL.Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+        results = analyze_throw(pil_full)
+        face_values = [face for _, _, face, _, _ in results]
+        print(f"Detected: {face_values}")
+        roll_counts = [face_values.count(val) for val in range(1, 7)]
+        roll_counts = roll_counts[::-1]
+        # Update GUI state and refresh atomically from main thread
+        def update(bg=new_bg, counts=roll_counts):
+            gui_state.bg_img = bg
+            gui_state.disp_result = counts
+            refreshCanvas()
+        root.after(0, update)
 
 if ImageSource.onRaspi():
     # Continuous capture mode on raspi
