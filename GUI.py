@@ -148,9 +148,23 @@ def on_button_press(evt):
     gui_state.bg_img = PIL.ImageTk.PhotoImage(image=pil_img)
     refreshCanvas()
 
+def workerThread():
+    # Continuously capture and recognize dice.
+    while True:
+        img = ImageSource.getImage()
+        # Update the display image
+        disp_img = cv2.resize(img, (display_w, display_h))
+        disp_img = cv2.cvtColor(disp_img, cv2.COLOR_BGR2RGB)
+        pil_img = PIL.Image.fromarray(disp_img)
+        gui_state.bg_img = PIL.ImageTk.PhotoImage(image=pil_img)
+        # Run detection
+        detectionTask(img)
+
 if ImageSource.onRaspi():
-    canvas.bind("<Button-1>", on_button_press)
+    # Continuous capture mode on raspi
+    threading.Thread(target=workerThread, daemon=True).start()
 else:
+    # Click to capture on desktop
     canvas.bind("<Button-1>", on_button_press)
 
 # TK event loop never returns.
