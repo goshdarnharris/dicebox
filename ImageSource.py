@@ -19,23 +19,25 @@ try:
     # picam.configure(config)
     # picam.start_preview(Preview.DRM)
 
+    # 4608, 2592 is maximum resolution of rpicam3
     config = picam.create_still_configuration({
-        "size": (1536, 864),
+        "size": (4608, 2592),
+        #"size": (1536, 864),
     })
 
     picam.configure(config)
     picam.start()
     picam.set_controls({
         "AfMode": controls.AfModeEnum.Manual,
-        "LensPosition": 5.5,
+        "LensPosition": 4.0,
         "ExposureTime": 15000,
     })
     time.sleep(0.5)  # Wait for focus
 
     # Keystone correction: These numbers hardcoded by looking at an output image for this mechanical setup.
     # Will need future adjustment.
-    src_pts = np.float32([(90, 105), (1400, 105), (1315, 780), (167, 787)])
-    dst_pts = np.float32([(0, 0), (1536, 0), (1536, 864), (0, 864)])
+    src_pts = np.float32([(751,621), (3796,603), (3502,2327), (1037,2352)])
+    dst_pts = np.float32([(0, 0), (1676, 0), (1676, 1196), (0, 1196)])
 
     warp_matrix = cv2.getPerspectiveTransform(src_pts, dst_pts)
 
@@ -49,7 +51,7 @@ try:
         # Convert to cv2 compliant BGR
         bgr_img = cv2.cvtColor(rgb_img, cv2.COLOR_RGB2BGR)
         # Keystone correction
-        corrected_img = cv2.warpPerspective(bgr_img, warp_matrix, (1536, 864))
+        corrected_img = cv2.warpPerspective(bgr_img, warp_matrix, (1676, 1196))
 
         img_name = "%s/%02d.jpg"%(out_dir,img_i)
         cv2.imwrite(img_name, corrected_img)
