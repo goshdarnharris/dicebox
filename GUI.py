@@ -11,7 +11,7 @@ sys.path.insert(0, 'Neural')
 from ThrowAnalyzer import analyze_throw, ambiguity_icon_size
 
 import threading
-import math
+from probability_display import compute_probability_display
 
 # Opposite face mapping: bottom 1 = top 6, bottom 2 = top 5, etc.
 OPPOSITE_FACE = {1: 6, 2: 5, 3: 4, 4: 3, 5: 2, 6: 1}
@@ -148,30 +148,14 @@ def refreshCanvas():
         writeTextConfig(pivot_left_count, str(low_sum))
         writeTextConfig(pivot_right_count, str(high_sum))
         writeTextConfig(total_text, f"n={n_dice}")
-        # Stddev from expected (only meaningful with enough dice)
-        if n_dice >= 3:
-            prob_high = (6 - p) / 6.0
-            expected = n_dice * prob_high
-            std = math.sqrt(n_dice * prob_high * (1 - prob_high))
-            if std > 0:
-                z = (high_sum - expected) / std
-                writeTextConfig(stddev_text, f"{'▲' if z >= 0 else '▼'} {abs(z):.1f}σ")
-                # Dynamic color: green for positive, red for negative, white for neutral
-                # Saturates at +-3 sigma
-                t = max(-1.0, min(1.0, z / 3.0))
-                if t >= 0:
-                    r, g, b = int(255 * (1 - t)), 255, int(255 * (1 - t))
-                else:
-                    r, g, b = 255, int(255 * (1 + t)), int(255 * (1 + t))
-                color = f"#{r:02x}{g:02x}{b:02x}"
-                canvas.itemconfig(stddev_text[1], fill=color)
-                # Dynamic size: base 22 + 10 per sigma
-                size = int(22 + abs(z) * 10)
-                font = ("Helvetica", size, "bold")
-                for item_id in stddev_text:
-                    canvas.itemconfig(item_id, font=font)
-            else:
-                writeTextConfig(stddev_text, '')
+        prob = compute_probability_display(gui_state.disp_result, p)
+        if prob:
+            text, font_size, color = prob
+            writeTextConfig(stddev_text, text)
+            canvas.itemconfig(stddev_text[1], fill=color)
+            font = ("Helvetica", font_size, "bold")
+            for item_id in stddev_text:
+                canvas.itemconfig(item_id, font=font)
         else:
             writeTextConfig(stddev_text, '')
     else:
@@ -194,7 +178,7 @@ def prepare_display(img, results, ambiguities, pivot):
     pil_img = PIL.Image.fromarray(disp_img).rotate(180)
 
     draw = PIL.ImageDraw.Draw(pil_img)
-    circle_r = 35  # 70px diameter / 2
+    circle_r = 30  # 70px diameter / 2
     font_die = PIL.ImageFont.load_default(size=40)
 
     # Draw ambiguity markers first (behind die overlays)
