@@ -20,8 +20,11 @@ try:
     # picam.start_preview(Preview.DRM)
 
     # 4608, 2592 is maximum resolution of rpicam3
+    # But we're going to use lower res to reduce processing requirements
+    max_res_divisor = 3
+
     config = picam.create_still_configuration({
-        "size": (4608, 2592),
+        "size": (4608//max_res_divisor, 2592//max_res_divisor),
         #"size": (1536, 864),
     })
 
@@ -29,14 +32,16 @@ try:
     picam.start()
     picam.set_controls({
         "AfMode": controls.AfModeEnum.Manual,
-        "LensPosition": 4.0,
+        "LensPosition": 4.5,
         "ExposureTime": 15000,
     })
     time.sleep(0.5)  # Wait for focus
 
     # Keystone correction: These numbers hardcoded by looking at an output image for this mechanical setup.
     # Will need future adjustment.
-    src_pts = np.float32([(751,621), (3796,603), (3502,2327), (1037,2352)])
+    src_pts_native = [(751, 621), (3796, 603), (3502, 2327), (1037, 2352)]
+    src_pts_downscale = [(x/max_res_divisor, y/max_res_divisor) for (x,y) in src_pts_native]
+    src_pts = np.float32(src_pts_downscale)
     dst_pts = np.float32([(0, 0), (1676, 0), (1676, 1196), (0, 1196)])
 
     warp_matrix = cv2.getPerspectiveTransform(src_pts, dst_pts)
