@@ -21,7 +21,7 @@ try:
 
     # 4608, 2592 is maximum resolution of rpicam3
     # But we're going to use lower res to reduce processing requirements
-    max_res_divisor = 3
+    max_res_divisor = 2
 
     config = picam.create_still_configuration({
         "size": (4608//max_res_divisor, 2592//max_res_divisor),
@@ -58,8 +58,8 @@ try:
         # Keystone correction
         corrected_img = cv2.warpPerspective(bgr_img, warp_matrix, (1676, 1196))
 
-        img_name = "%s/%02d.jpg"%(out_dir,img_i)
-        cv2.imwrite(img_name, corrected_img)
+        img_name = "%s/%03d.jpg"%(out_dir,img_i)
+        #cv2.imwrite(img_name, corrected_img)
         # os.system("eog %s"%img_name)
         img_i += 1
         return corrected_img

@@ -110,7 +110,7 @@ pivot_right_label = drawText('4+', display_w - pivot_margin, gui_label_y, 28)
 pivot_right_count = drawText('—', display_w - pivot_margin, gui_count_y, 44)
 
 # Stddev beneath pivot- on left, total beneath pivot+ on right (inline text)
-stddev_text = drawText('', pivot_margin, gui_count_y + 50, 22)
+stddev_text = drawText('', 10, gui_count_y + 50, 22, anchor='w')
 total_text = drawText('', display_w - pivot_margin, gui_count_y + 50, 22)
 
 # Exit button in bottom left
@@ -241,7 +241,7 @@ def workerThread():
         img = ImageSource.getImage()
         process_and_display(img)
 
-if ImageSource.onRaspi():
+if False and ImageSource.onRaspi():
     # Continuous capture mode on raspi
     threading.Thread(target=workerThread, daemon=True).start()
 else:
