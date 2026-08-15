@@ -21,25 +21,31 @@ try:
 
     # 4608, 2592 is maximum resolution of rpicam3
     # But we're going to use lower res to reduce processing requirements
-    max_res_divisor = 2
+    max_res_divisor = 1
 
     config = picam.create_still_configuration({
-        "size": (4608//max_res_divisor, 2592//max_res_divisor),
+        #"size": (4608//max_res_divisor, 2592//max_res_divisor),
+        "size": (2592,1944),
         #"size": (1536, 864),
     })
 
     picam.configure(config)
     picam.start()
-    picam.set_controls({
-        "AfMode": controls.AfModeEnum.Manual,
-        "LensPosition": 4.5,
+    cam_controls = {
         "ExposureTime": 15000,
-    })
-    time.sleep(0.5)  # Wait for focus
+    }
+    # Autofocus controls only exist on AF-capable cameras (e.g. rpicam3).
+    # Fixed-focus cameras don't advertise AfMode and would raise on set_controls.
+    if "AfMode" in picam.camera_controls:
+        cam_controls["AfMode"] = controls.AfModeEnum.Manual
+        cam_controls["LensPosition"] = 4.5
+    picam.set_controls(cam_controls)
+    time.sleep(0.5)  # Wait for focus/exposure to settle
 
     # Keystone correction: These numbers hardcoded by looking at an output image for this mechanical setup.
     # Will need future adjustment.
-    src_pts_native = [(751, 621), (3796, 603), (3502, 2327), (1037, 2352)]
+    #src_pts_native = [(751, 621), (3796, 603), (3502, 2327), (1037, 2352)]
+    src_pts_native = [(346, 634), (2349, 653), (2195, 1895), (488, 1886)]
     src_pts_downscale = [(x/max_res_divisor, y/max_res_divisor) for (x,y) in src_pts_native]
     src_pts = np.float32(src_pts_downscale)
     dst_pts = np.float32([(0, 0), (1676, 0), (1676, 1196), (0, 1196)])
