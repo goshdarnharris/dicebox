@@ -241,7 +241,7 @@ def workerThread():
         img = ImageSource.getImage()
         process_and_display(img)
 
-if False and ImageSource.onRaspi():
+if ImageSource.onRaspi():
     # Continuous capture mode on raspi
     threading.Thread(target=workerThread, daemon=True).start()
 else:
